@@ -18,6 +18,66 @@ Two kinds of rule:
 Every finding prints as `file(line): Error: SDxxx message`, like a compiler
 error, so editors and CI pick it up.
 
+## Why not Rust?
+
+Rust is the reference for "safe and strict": the borrow checker, no null,
+exhaustive `match`, `Result` instead of exceptions, `unsafe` blocks that
+stand out. Safe D aims for most of that guarantee at a fraction of the build
+cost. The trade is deliberate, so here it is in full.
+
+### Safety and correctness
+
+| Concern | Rust | Safe D |
+| --- | --- | --- |
+| Memory safety | Borrow checker; compile error. | `@safe` + DIP1000 `scope`, with the GC owning heap memory; compile error. Equivalent for use-after-free and out-of-bounds. Both keep bounds checks in release builds. |
+| Escape hatches | `unsafe { }`: visible, but not counted (`cargo-geiger` is opt-in). | `@trusted`, `cast`, `assumeIsolated`: each needs a reason (SD006) and counts against a per-repo budget (SD004, SD005, SD009, SD020). **Stricter than stock Rust.** |
+| Data races | `Send`/`Sync`; compile error. | `shared` + `nosharedaccess` makes touching shared data directly a compile error. Unshared data crosses threads safely only through `safed.concurrency.spawn` (immutable or `Isolated` arguments). The checker bans raw threads (SD007, SD008); the type system doesn't. **Weaker than Rust**: a lint, not a proof. |
+| Aliasing | One `&mut` or many `&`; compile error. | Not checked. Mutable aliasing is memory-safe under the GC, but it allows logic bugs that Rust rules out (mutating a collection while something else reads it). **Weaker than Rust.** |
+| Null | No null; `Option<T>`. | Class references can be null. `Option`/`NotNull`, the null-audit unittest (SD018) and budgets on classes, null checks and `Nullable` (SD015–SD017, SD019) shrink it to counted, reviewed places. **Weaker than Rust**: enforced by the checker and a test, not by the types. |
+| Exhaustiveness | `match` must be exhaustive. | `final switch` must be, and SD014 bans `default:` in a switch over an enum. `SumType.match` is exhaustive. **Equivalent** once SD014 holds. |
+| Errors | `Result` and `?`; panics for bugs. | Exceptions. SD012 bans silent catches and catching `Error`/`Throwable`; SD013 caps catches. An error can still propagate without appearing in a signature. **Weaker than Rust.** |
+| Unsigned underflow | Panics in debug builds; wraps in release by default. | Wraps. `saturatingSub` and `checkedSub` (which halts), plus SD010/SD011 in the modules where it matters. **About equal**: in both, release builds are safe only where the code chose checked arithmetic. |
+| Casts | `as` truncates silently; `From`/`TryFrom` are checked. | `cast(` is budgeted (SD020); `std.conv.to` is checked. **Stricter than stock Rust**, which doesn't count `as`. |
+
+In short, Safe D is:
+- **Equal** on memory safety and exhaustiveness.
+- **Stricter** on counting escape hatches.
+- **Weaker** on aliasing, data races outside `safed.concurrency`, null, and
+  errors in signatures. There the checker and its budgets do work that
+  Rust's types do.
+
+The gap is real. The budgets keep it visible and shrinking.
+
+### Build time and disk
+
+These numbers compare the same program in both languages: nano-coder (Rust:
+72,360 lines plus 288 crates in `Cargo.lock`) and nano-coder-d, its D port
+(52,806 lines, Phobos only). Measured on an Apple M4 Pro, with dependencies
+already downloaded.
+
+| | Rust (cargo 1.100) | D (LDC 1.43, dub) |
+| --- | --- | --- |
+| Clean debug build | 31.0 s | 6.8 s |
+| Clean release build | 74.5 s | 18.3 s |
+| Rebuild after touching one file | **2.6 s** (incremental) | 6.7 s (dub rebuilds the whole package) |
+| Build output per configuration, debug | 1.1 GB (`target/debug`) | 22 MB (`~/.dub/cache`) |
+| Build output per configuration, release | 387 MB (`target/release`) | 13 MB |
+| Release binary | 6.0 MB | 4.9 MB |
+| Toolchain on disk | 0.6–1.3 GB per Rust version | 98 MB (LDC) + 9 MB (dub) |
+| Dependency cache | 1.0 GB (`~/.cargo/registry`) | 76 MB (`~/.dub/packages`) |
+
+What the numbers show:
+- **Clean builds are 4–5x faster in D.** That matters for CI, for agent
+  workers that build from a fresh checkout, and for machines that host many
+  checkouts.
+- **Build output is 30–50x smaller per configuration**, and the toolchain
+  about a tenth the size.
+- **dub never prunes its cache.** nano-coder-d's has built up 85
+  configurations (1.5 GB); clear `~/.dub/cache` now and then.
+- **Rust wins the edit-and-rebuild loop.** cargo compiles incrementally and
+  dub doesn't, so a one-file change rebuilds faster in Rust. D's full rebuild
+  of this program still takes under 7 seconds.
+
 ## The compiler settings (SD021)
 
 Every `dub.json` package (root and subpackages) has:

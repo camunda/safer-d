@@ -3,7 +3,9 @@
 The shared Safe D rules for Camunda's D projects, and the tools that hold a
 repo to them. Safe D is D with every escape hatch (`@trusted`, casts, null,
 raw threads, silent catches) either banned or counted: the TypeScript-strict
-idea, at D's compile times. [SAFE-D.md](SAFE-D.md) has the rules and why.
+idea, at D's compile times. [SAFE-D.md](SAFE-D.md) has the rules and why,
+and [how Safe D compares with Rust](SAFE-D.md#why-not-rust) on safety and on
+build time and disk (clean builds 4–5x faster, build output 30–50x smaller).
 
 One dub package, two parts:
 
