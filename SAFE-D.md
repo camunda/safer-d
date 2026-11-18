@@ -1,0 +1,207 @@
+# Safe D
+
+Safe D is D with the escape hatches counted: what TypeScript's strict mode
+and a ban on `any` and casts are to JavaScript. The compiler does most of the
+work (`@safe`, DIP1000 scope checking, `nosharedaccess`); `safe-d-check`
+enforces the rest, the parts the compiler allows but a reviewer shouldn't
+have to catch.
+
+Two kinds of rule:
+
+- **Bans** fail on any occurrence. They cover things with a safe replacement
+  in `safe-d` itself.
+- **Budgets** cap a count per repo (`safe-d.json` `budgets`, missing = 0).
+  They cover escapes that are sometimes right. A budget can only go down
+  without review: the checker tells you when the code comes in under it, and
+  `--ratchet` lowers it. Raising one is a visible diff in a PR.
+
+Every finding prints as `file(line): Error: SDxxx message`, like a compiler
+error, so editors and CI pick it up.
+
+## The compiler settings (SD021)
+
+Every `dub.json` package (root and subpackages) has:
+
+| Setting | Why |
+| --- | --- |
+| `toolchainRequirements`: `ldc >=1.43.0`, `dmd: no`, `gdc: no` | One compiler, one set of diagnostics. |
+| `-preview=dip1000` | `scope` is checked: no reference outlives what it points into. |
+| `-preview=nosharedaccess` | `shared` data is only touched through atomics or a lock. |
+| `dflags-ldc: -fno-delete-null-pointer-checks` | A null dereference traps instead of being optimised into anything. |
+| release `dflags-ldc: -boundscheck=on` | Release builds keep bounds checks: `@safe` relies on them. |
+| root `preBuildCommands` runs safe-d-check | Every build is checked, not only CI. |
+
+The hook `safe-d-check init` writes:
+
+```json
+"preBuildCommands": ["dub run -q --root \"$SAFE_D_PACKAGE_DIR\" :check -- --root \"$PACKAGE_DIR\""]
+```
+
+dub sets `$SAFE_D_PACKAGE_DIR` to the safe-d the project depends on, so the
+checker is always that version: no registry lookup, no drift between the
+rules and the library that answers them.
+
+## Rules
+
+| ID | Kind | Rule |
+| --- | --- | --- |
+| SD001 | ban | Every module has a module-level `@safe:`. |
+| SD002 | ban | No `@system:` or `@trusted:` labels. |
+| SD003 | ban | `@system` only on `extern (C)` declarations. |
+| SD004 | budget `trusted` | `@trusted` outside the io modules. |
+| SD005 | budget `trusted-io` | `@trusted` inside the io modules. |
+| SD006 | ban | A comment directly above every `@trusted` and `assumeIsolated` says why it is safe. |
+| SD007 | ban | No raw threads outside the io modules. |
+| SD008 | ban | No `__gshared` or `union` outside the io modules. |
+| SD009 | budget `isolation` | `assumeIsolated` outside the io modules. |
+| SD010 | ban | No hand-written `a > b ? a - b : 0`. |
+| SD011 | budget `subtraction` | Raw subtractions in the `subtractionScope` modules. |
+| SD012 | ban | A `catch (Exception)` that swallows says why; never catch `Throwable` or `Error`. |
+| SD013 | budget `catch` | `catch (Exception)` outside test files. |
+| SD014 | ban | A `switch` over an enum is a `final switch`. |
+| SD015 | budget `class-null` | Null checks on class references. |
+| SD016 | budget `nullable` | `Nullable!` uses. |
+| SD017 | budget `class` | Class declarations (exceptions aside). |
+| SD018 | ban | The null-audit module imports every module. |
+| SD019 | budget `nullable-mark` | `@nullable("why")` marks. |
+| SD020 | budget `cast` | `cast(` outside the io modules. |
+| SD021 | ban | `dub.json` keeps the compiler settings above. |
+
+### SD001–SD003: `@safe` everywhere
+
+`@safe:` at the top of every module makes memory safety the default; the
+compiler then rejects pointer arithmetic, unchecked casts and calls into
+`@system` code. `@system:` and `@trusted:` labels would turn that off for the
+rest of a module without anyone seeing it, so they are banned. `@system` is
+only for declaring C functions; their callers wrap them in `@trusted`.
+
+### SD004–SD006: `@trusted` is a reviewed promise
+
+`@trusted` tells the compiler "I checked this by hand". Each one is a place
+the compiler stopped looking, so each needs a reason (SD006: a comment
+directly above, or above the first line of a wrapped signature) and each
+counts.
+
+The **io modules** (`safe-d.json` `ioModules`) are where a project keeps the
+wrappers around C, the OS and Phobos' `@system` corners: `safed.io`,
+`safed.concurrency` and `safed.json` in this repo, a project's own
+`safeio.d` elsewhere. They get their own budget (SD005) because escapes there
+are expected and reviewed together; anywhere else (SD004) an escape is a
+smell, usually fixed by moving the wrapper into an io module.
+
+Text inside `mixin("...")` counts as code for these rules, and for SD002,
+SD003, SD007–SD009 and SD020: a string mixin can't hide an escape.
+
+### SD007–SD009: threads go through `safed.concurrency`
+
+`new Thread`, `std.concurrency` and `__gshared` let two threads see the same
+mutable data with no type telling you so. `safed.concurrency` offers
+`spawn`/`spawnDaemon` (only `Isolated` or immutable arguments cross),
+`Locked!T`, `Shared!T` and `Chan!T` instead, all `@safe`. `union` is banned
+for the same reason as a cast: it reinterprets memory. `assumeIsolated`
+(SD009) asserts that nothing else holds a reference; it is counted and needs
+a reason, like `@trusted`.
+
+### SD010–SD011: unsigned subtraction
+
+`size_t` subtraction wraps silently: `0 - 1` is 18 quintillion.
+`safed.arith.saturatingSub(a, b)` stops at zero and `checkedSub` halts on underflow (as `checkedAdd`/`checkedMul` do on overflow); the
+hand-written `a > b ? a - b : 0` (SD010) is banned because the next edit
+flips one side. SD011 counts raw `a - b` in the modules listed in
+`subtractionScope`: the ones where a wrapped length or offset is a real bug
+(budgets, windows, offsets). `$ - 1` and negative literals don't count.
+
+### SD012–SD013: no silent catches
+
+A `catch (Exception)` that neither uses the exception nor rethrows hides
+failures (SD012); give the reason in a `//` comment on or above it.
+`Throwable` and `Error` are never caught: they mean the program is broken
+(an assert, a range error, out of memory), and carrying on is unsafe. The
+catch budget (SD013) keeps error handling on the explicit path: return types,
+`Option`, `SumType`.
+
+### SD014: `final switch` over enums
+
+A `final switch` fails to compile when someone adds an enum member, so the
+compiler finds every place to update. `default:` makes the new member fall
+through silently. List the skipped members as empty cases instead.
+
+### SD015–SD019: no null
+
+A class reference can be null, and D won't stop you dereferencing it.
+`safed.option.Option!T` is the type for "maybe absent"; it is read with
+`foreach (x; opt)`, so there is no unwrap to forget, and `some(null)` halts
+at the point of the mistake rather than later. `NotNull!T` carries a class
+reference that has been checked.
+
+- SD015 counts null checks on class references: each is a place where the
+  type should have been `Option`.
+- SD016 counts `Nullable!`, which has `.get` that throws, the same trap.
+- SD017 counts classes. Prefer a struct, an enum or a `SumType`; a class is
+  for reference identity or inheritance, and every class reference can be
+  null. Exceptions don't count.
+- SD018 and SD019: `safed.nullaudit.auditModules!(...)` fails a unittest when
+  any field or global is a bare class reference (not `Option`, `NotNull` or
+  marked `@nullable("why")`). SD018 makes sure the audit module imports every
+  module, so a new one can't skip it; SD019 counts the marks.
+
+### SD020: casts
+
+`cast(` is D's `as any`: it overrides the type system, and in `@safe` code
+the compiler only rejects the most dangerous ones. Use `std.conv.to` (checked: it throws when a value doesn't fit) for
+conversions, and a typed function for the rest. Casts in the io modules don't count; generated code can be
+exempted with `allow`.
+
+## safe-d.json
+
+```json
+{
+  "sources": ["source"],
+  "exclude": [],
+  "ioModules": ["source/app/safeio.d"],
+  "testFiles": ["*_test.d"],
+  "subtractionScope": ["source/app/budget.d"],
+  "nullAudit": { "module": "source/app/null_audit_test.d", "skip": ["source/app.d"] },
+  "allow": { "SD020": ["source/app/generated"] },
+  "rules": { "SD020": "warn" },
+  "budgets": { "trusted-io": 12, "catch": 3 },
+  "dubFiles": ["dub.json"],
+  "requireHook": true
+}
+```
+
+| Key | Meaning |
+| --- | --- |
+| `sources` | Directories (or files) to check. |
+| `exclude` | Paths to skip, with everything under them. |
+| `ioModules` | Files where `@trusted`, threads, `__gshared` and casts are expected. |
+| `testFiles` | Globs for test files: exempt from SD012, SD013, SD016, SD017 and SD020. |
+| `subtractionScope` | Files where SD011 counts raw subtractions. |
+| `nullAudit` | The module that runs `auditModules`; `skip` lists modules it can't import. Omit to turn SD018 off. |
+| `allow` | Rule ID to paths where that rule doesn't apply. |
+| `rules` | Rule ID to `off` or `warn` (default: error). |
+| `budgets` | Budget name to the most allowed. Missing means 0. |
+| `dubFiles` | `dub.json` files SD021 checks. |
+| `requireHook` | Whether SD021 requires the build hook (off only for safe-d itself). |
+
+Unknown keys are an error, so a typo can't switch a rule off.
+
+## Adopting
+
+```bash
+dub add safe-d
+dub run safe-d:check -- adopt     # writes safe-d.json, budgets at today's counts
+```
+
+Then add the hook and CI (see the README). From then on a count can only go
+down. `adopt` on an existing `safe-d.json` keeps your settings and rewrites
+only the budgets.
+
+## Versioning the rules
+
+- A rule ID is never reused or renumbered.
+- From 0.1.0 on, a new rule ships as `warn` in a minor release and becomes an error in the
+  next minor, so a dependency bump never breaks a build without notice. Pin
+  with `~>` in `dub.json`; `adopt` after a bump sets budgets for new counts.
+- Bug fixes that catch more (as when string mixins started counting) are
+  minor releases, with the change in the release notes.

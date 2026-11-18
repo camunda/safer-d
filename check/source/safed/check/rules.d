@@ -1,0 +1,651 @@
+/// The Safe D rules. Each has an id (`SD001`...), and those that cap a count
+/// rather than ban a pattern have a budget name, whose value lives in the
+/// project's `safe-d.json`. SAFE-D.md gives the reasoning for each.
+module safed.check.rules;
+
+@safe:
+
+import std.regex : ctRegex, matchAll, matchFirst, regex;
+import std.algorithm : canFind, endsWith, startsWith;
+import std.string : strip, stripRight;
+import safed.check.config : Config, Severity;
+import safed.check.lexer : Line, lex, isBlank;
+
+/// A rule, for `--rules` and the docs.
+struct Rule
+{
+    string id;
+    /// The budget it ratchets, or null for a ban.
+    string budget;
+    string title;
+}
+
+/// Every rule, in id order.
+static immutable Rule[] allRules = [
+    Rule("SD001", null, "every module has a module-level `@safe:`"),
+    Rule("SD002", null, "no `@system:` or `@trusted:` labels"),
+    Rule("SD003", null, "`@system` only on `extern (C)` declarations"),
+    Rule("SD004", "trusted", "`@trusted` outside the io modules is capped"),
+    Rule("SD005", "trusted-io", "`@trusted` inside the io modules is capped"),
+    Rule("SD006", null, "a comment above every `@trusted` and `assumeIsolated` says why it is safe"),
+    Rule("SD007", null, "no raw threads (`new Thread`, `isDaemon`, `std.concurrency`) outside the io modules; use safed.concurrency.spawn"),
+    Rule("SD008", null, "no `__gshared` or `union` outside the io modules"),
+    Rule("SD009", "isolation", "`assumeIsolated` calls outside the io modules are capped"),
+    Rule("SD010", null, "no hand-written `a > b ? a - b : 0`; use safed.arith.saturatingSub"),
+    Rule("SD011", "subtraction", "raw subtractions in the `subtractionScope` modules are capped"),
+    Rule("SD012", null, "a `catch (Exception)` that swallows says why; never catch `Throwable` or `Error`"),
+    Rule("SD013", "catch", "`catch (Exception)` outside test files is capped"),
+    Rule("SD014", null, "a `switch` over an enum is a `final switch` (no `default:`)"),
+    Rule("SD015", "class-null", "null checks on class references are capped; use safed.option.Option"),
+    Rule("SD016", "nullable", "`Nullable!` uses are capped; use safed.option.Option"),
+    Rule("SD017", "class", "class declarations (exceptions aside) are capped; prefer a struct, enum or SumType"),
+    Rule("SD018", null, "the null-audit module imports every module"),
+    Rule("SD019", "nullable-mark", "`@nullable(\"why\")` marks are capped"),
+    Rule("SD020", "cast", "`cast(` outside the io modules is capped"),
+    Rule("SD021", null, "dub.json keeps the Safe D compiler settings"),
+];
+
+/// The rule with `id`.
+Rule ruleById(string id) pure
+{
+    foreach (r; allRules)
+        if (r.id == id) return r;
+    assert(0, "no rule " ~ id);
+}
+
+/// One source file, lexed.
+struct Source
+{
+    /// Path relative to the project root, `/`-separated.
+    string path;
+    Line[] lines;
+}
+
+/// Lex `text` as the file at `path`.
+Source source(string path, string text) pure { return Source(path, lex(text)); }
+
+/// One violation.
+struct Finding
+{
+    string rule;
+    string file;
+    size_t line;
+    string message;
+}
+
+/// A counted rule's result: how many, where, against which budget.
+struct Count
+{
+    string rule;
+    string budget;
+    string what;
+    long count;
+    /// "file(line)" for each counted occurrence.
+    string[] where;
+}
+
+/// Everything a run found.
+struct Result
+{
+    Finding[] findings;
+    Count[] counts;
+}
+
+/// Run every rule that is not `off` over `files` (and the dub.json texts,
+/// given as path => text).
+Result runRules(const ref Config cfg, const Source[] files, const string[string] dubJsons)
+{
+    Result r;
+    bool on(string id) { return cfg.severity(id) != Severity.off; }
+
+    if (on("SD001")) sd001(cfg, files, r);
+    if (on("SD002") || on("SD003")) sd002_003(cfg, files, r);
+    trustedCounts(cfg, files, r);
+    if (on("SD006")) sd006(cfg, files, r);
+    if (on("SD007") || on("SD008")) sd007_008(cfg, files, r);
+    countLines(cfg, files, r, "SD009", "`assumeIsolated` calls outside the io modules",
+        (f) => !cfg.isIo(f.path), (code) => countMatches(code, ctRegex!`\bassumeIsolated\(`), true);
+    if (on("SD010")) sd010(cfg, files, r);
+    sd011(cfg, files, r);
+    if (on("SD012")) sd012(cfg, files, r);
+    countLines(cfg, files, r, "SD013", "`catch (Exception)` outside test files",
+        (f) => !cfg.isTest(f.path), (code) => matchFirst(code, ctRegex!`catch\s*\(\s*Exception\b`) ? 1 : 0);
+    if (on("SD014")) sd014(cfg, files, r);
+    sd015(cfg, files, r);
+    countLines(cfg, files, r, "SD016", "`Nullable!` uses outside test files (use safed.option.Option)",
+        (f) => !cfg.isTest(f.path), (code) => countMatches(code, ctRegex!`Nullable!`));
+    countLines(cfg, files, r, "SD017", "class declarations outside test files (exceptions aside)",
+        (f) => !cfg.isTest(f.path), (code) => isClassDecl(code) ? 1 : 0);
+    if (on("SD018")) sd018(cfg, files, r);
+    countLines(cfg, files, r, "SD019", "`@nullable` marks outside test files",
+        (f) => !cfg.isTest(f.path), (code) => matchFirst(code, ctRegex!`^\s*@nullable\(`) ? 1 : 0);
+    countLines(cfg, files, r, "SD020", "`cast(` outside the io modules and test files",
+        (f) => !cfg.isTest(f.path) && !cfg.isIo(f.path), (code) => countMatches(code, ctRegex!`(^|[^\w])cast\s*\(`), true);
+    if (on("SD021")) sd021(cfg, dubJsons, r);
+    return r;
+}
+
+private size_t countMatches(R)(string s, R re)
+{
+    size_t n;
+    foreach (_; matchAll(s, re)) n++;
+    return n;
+}
+
+private string at(string file, size_t line)
+{
+    import std.conv : to;
+    return file ~ "(" ~ line.to!string ~ ")";
+}
+
+/// A counted rule: `select` picks the files, `perLine` counts on one line's code.
+private void countLines(const ref Config cfg, const Source[] files, ref Result r, string id, string what,
+    scope bool delegate(const ref Source) @safe select, scope size_t delegate(string) @safe perLine,
+    bool escapes = false)
+{
+    if (cfg.severity(id) == Severity.off) return;
+    auto rule = ruleById(id);
+    Count c = Count(id, rule.budget, what);
+    foreach (ref f; files)
+    {
+        if (!select(f) || cfg.allowed(id, f.path)) continue;
+        foreach (ref l; f.lines)
+        {
+            immutable n = perLine(escapes ? l.escapeText : l.code);
+            if (n)
+            {
+                c.count += n;
+                c.where ~= at(f.path, l.number);
+            }
+        }
+    }
+    r.counts ~= c;
+}
+
+// ---- SD001-SD005: @safe everywhere, escapes counted -----------------------
+
+private void sd001(const ref Config cfg, const Source[] files, ref Result r)
+{
+    foreach (ref f; files)
+    {
+        if (cfg.allowed("SD001", f.path)) continue;
+        bool found;
+        foreach (ref l; f.lines)
+            if (l.code.startsWith("@safe:")) { found = true; break; }
+        if (!found)
+            r.findings ~= Finding("SD001", f.path, 1, "module is missing a module-level `@safe:`");
+    }
+}
+
+private void sd002_003(const ref Config cfg, const Source[] files, ref Result r)
+{
+    auto label = ctRegex!`^\s*@(system|trusted)\s*:`;
+    auto system = ctRegex!`(^|[^\w])@system\b`;
+    foreach (ref f; files)
+        foreach (ref l; f.lines)
+        {
+            immutable text = l.escapeText;
+            if (cfg.severity("SD002") != Severity.off && !cfg.allowed("SD002", f.path) && matchFirst(text, label))
+                r.findings ~= Finding("SD002", f.path, l.number,
+                    "`@system:`/`@trusted:` turn off @safe for the rest of a scope; mark the smallest function or lambda instead");
+            else if (cfg.severity("SD003") != Severity.off && !cfg.allowed("SD003", f.path)
+                && matchFirst(text, system) && !matchFirst(text, ctRegex!`extern\s*\(\s*C\s*\)`))
+                r.findings ~= Finding("SD003", f.path, l.number,
+                    "`@system` is only allowed on `extern (C)` declarations; use @safe, or @trusted on the smallest function or lambda");
+        }
+}
+
+private bool hasTrusted(string code)
+{
+    return !matchFirst(code, ctRegex!`(^|[^\w])@trusted\b`).empty;
+}
+
+private void trustedCounts(const ref Config cfg, const Source[] files, ref Result r)
+{
+    countLines(cfg, files, r, "SD004", "`@trusted` outside the io modules",
+        (f) => !cfg.isIo(f.path), (code) => hasTrusted(code) ? 1 : 0, true);
+    countLines(cfg, files, r, "SD005", "`@trusted` in the io modules",
+        (f) => cfg.isIo(f.path), (code) => hasTrusted(code) ? 1 : 0, true);
+}
+
+// ---- SD006: every escape says why -----------------------------------------
+
+private bool endsStatement(string code)
+{
+    auto s = code.stripRight;
+    return s.length && (s[$ - 1] == ';' || s[$ - 1] == '{' || s[$ - 1] == '}');
+}
+
+private void sd006(const ref Config cfg, const Source[] files, ref Result r)
+{
+    foreach (ref f; files)
+    {
+        if (cfg.allowed("SD006", f.path)) continue;
+        immutable io = cfg.isIo(f.path);
+        bool ok;
+        foreach (ref l; f.lines)
+        {
+            if (l.blank) continue;
+            if (l.commentOnly) { ok = true; continue; }
+            immutable trusted = hasTrusted(l.escapeText);
+            if (trusted || l.escapeText.canFind(".assumeIsolated("))
+            {
+                // In the io modules every function is an escape, so an
+                // `assumeIsolated` there needs no separate note; a
+                // `@trusted` always does.
+                if (!ok && (trusted || !io))
+                    r.findings ~= Finding("SD006", f.path, l.number,
+                        "`@trusted` or `assumeIsolated` without a comment above it saying why it is safe");
+                if (endsStatement(l.code)) ok = false;
+                continue;
+            }
+            if (endsStatement(l.code)) ok = false;
+        }
+    }
+}
+
+// ---- SD007-SD008: threads only through spawn, no unchecked sharing ---------
+
+private void sd007_008(const ref Config cfg, const Source[] files, ref Result r)
+{
+    auto threads = ctRegex!`\bnew Thread\b|\bisDaemon\b|\bstd\.concurrency\b`;
+    auto global = ctRegex!`\b__gshared\b|(^|[^\w])union\b`;
+    foreach (ref f; files)
+    {
+        if (cfg.isIo(f.path)) continue;
+        foreach (ref l; f.lines)
+        {
+            immutable text = l.escapeText;
+            if (cfg.severity("SD007") != Severity.off && !cfg.allowed("SD007", f.path) && matchFirst(text, threads))
+                r.findings ~= Finding("SD007", f.path, l.number,
+                    "start threads with safed.concurrency.spawn/spawnDaemon (sendable arguments only)");
+            if (cfg.severity("SD008") != Severity.off && !cfg.allowed("SD008", f.path) && matchFirst(text, global))
+                r.findings ~= Finding("SD008", f.path, l.number,
+                    "`__gshared` and unions are only allowed in the io modules; use `shared` with Locked/atomics, or std.sumtype");
+        }
+    }
+}
+
+// ---- SD010-SD011: size arithmetic -----------------------------------------
+
+private void sd010(const ref Config cfg, const Source[] files, ref Result r)
+{
+    // std.regex has no backreferences in ctRegex patterns over captures used
+    // this way, so compare the captured operands by hand.
+    auto guard = regex(`([\w.]+) >=? ([\w.]+) \? ([\w.]+) - ([\w.]+) : 0`);
+    foreach (ref f; files)
+    {
+        if (cfg.allowed("SD010", f.path)) continue;
+        foreach (ref l; f.lines)
+            foreach (m; matchAll(l.code, guard))
+                if (m[1] == m[3] && m[2] == m[4])
+                    r.findings ~= Finding("SD010", f.path, l.number,
+                        "use safed.arith.saturatingSub(a, b) instead of `a > b ? a - b : 0`");
+    }
+}
+
+/// Raw binary subtractions on one line of code (`$ - 1` index steps aside).
+size_t rawSubtractions(string code)
+{
+    import std.regex : replaceAll;
+    auto s = replaceAll(code, ctRegex!`\$\s*-`, "");
+    return countMatches(s, ctRegex!`[\w)\]]\s+-\s+[\w(]`);
+}
+
+private void sd011(const ref Config cfg, const Source[] files, ref Result r)
+{
+    if (cfg.severity("SD011") == Severity.off) return;
+    Count c = Count("SD011", "subtraction", "raw subtractions in the subtractionScope modules");
+    foreach (ref f; files)
+    {
+        import safed.check.config : underAny;
+        if (!underAny(f.path, cfg.subtractionScope) || cfg.allowed("SD011", f.path)) continue;
+        foreach (ref l; f.lines)
+            if (immutable n = rawSubtractions(l.code))
+            {
+                c.count += n;
+                c.where ~= at(f.path, l.number);
+            }
+    }
+    r.counts ~= c;
+}
+
+// ---- SD012: catches -------------------------------------------------------
+
+private void sd012(const ref Config cfg, const Source[] files, ref Result r)
+{
+    auto never = ctRegex!`catch\s*\(\s*(Throwable|Error)(\s|\))`;
+    auto head = ctRegex!`catch\s*\(\s*Exception(\s+(\w+))?\s*\)`;
+    auto throws = ctRegex!`(^|[^\w])throw([^\w]|$)`;
+    foreach (ref f; files)
+    {
+        if (cfg.isTest(f.path) || cfg.allowed("SD012", f.path)) continue;
+        bool inHandler, prevComment, commented, uses, opened;
+        long depth;
+        size_t catchLine;
+        string var;
+
+        bool usesVar(string code)
+        {
+            if (!var.length) return false;
+            return !matchFirst(code, regex(`(^|[^\w.])` ~ var ~ `([^\w]|$)`)).empty;
+        }
+        bool scan(string code)
+        {
+            foreach (ch; code)
+            {
+                if (ch == '{') { depth++; opened = true; }
+                else if (ch == '}') depth--;
+            }
+            return (opened && depth <= 0) || (!opened && code.stripRight.endsWith(";"));
+        }
+        void report()
+        {
+            if (uses || commented) return;
+            r.findings ~= Finding("SD012", f.path, catchLine,
+                "`catch (Exception)` swallows the exception; say why in a `//` comment (or report or rethrow it)");
+        }
+
+        foreach (ref l; f.lines)
+        {
+            immutable isComment = l.commentOnly;
+            if (inHandler)
+            {
+                if (l.hasComment) commented = true;
+                if (matchFirst(l.code, throws) || usesVar(l.code)) uses = true;
+                if (scan(l.code)) { report(); inHandler = false; }
+                if (isComment) prevComment = true;
+                else if (!isBlank(l.code)) prevComment = false;
+                continue;
+            }
+            if (matchFirst(l.code, never))
+            {
+                r.findings ~= Finding("SD012", f.path, l.number,
+                    "don't catch `Throwable` or `Error`: they mean a broken invariant or out of memory, and @safe code can't recover from them");
+                continue;
+            }
+            if (auto m = matchFirst(l.code, head))
+            {
+                var = m[2];
+                auto rest = m.post;
+                catchLine = l.number;
+                commented = prevComment || l.hasComment;
+                uses = false;
+                depth = 0;
+                opened = false;
+                if (matchFirst(rest, throws) || usesVar(rest)) uses = true;
+                if (scan(rest)) report();
+                else inHandler = true;
+                prevComment = false;
+                continue;
+            }
+            if (isComment) prevComment = true;
+            else if (!isBlank(l.code)) prevComment = false;
+        }
+    }
+}
+
+// ---- SD014: exhaustive enum switches --------------------------------------
+
+private void sd014(const ref Config cfg, const Source[] files, ref Result r)
+{
+    auto sw = ctRegex!`(^|[^\w])switch\s*\(`;
+    auto fin = ctRegex!`final\s+switch`;
+    auto enumCase = ctRegex!`(^|[^\w])case\s+[A-Z]\w*\.\w+`;
+    auto dflt = ctRegex!`(^|[^\w])default\s*:`;
+    struct Open { long depth; size_t line; bool overEnum, hasDefault; }
+    foreach (ref f; files)
+    {
+        if (cfg.allowed("SD014", f.path)) continue;
+        Open[] stack;
+        long depth;
+        bool pending;
+        size_t pendingLine;
+        // Labels in `seg` belong to the innermost open switch when they sit
+        // directly in its body (or open a `case X: { ... }` block).
+        void labels(string seg)
+        {
+            if (!stack.length || !(depth == stack[$ - 1].depth || depth == stack[$ - 1].depth + 1)) return;
+            if (matchFirst(seg, enumCase)) stack[$ - 1].overEnum = true;
+            if (matchFirst(seg, dflt)) stack[$ - 1].hasDefault = true;
+        }
+        foreach (ref l; f.lines)
+        {
+            auto s = l.code;
+            if (matchFirst(s, sw) && !matchFirst(s, fin)) { pending = true; pendingLine = l.number; }
+            size_t from;
+            foreach (i, ch; s)
+            {
+                if (ch != '{' && ch != '}') continue;
+                labels(s[from .. i]);
+                from = i + 1;
+                if (ch == '{')
+                {
+                    depth++;
+                    if (pending) { stack ~= Open(depth, pendingLine); pending = false; }
+                }
+                else
+                {
+                    if (stack.length && stack[$ - 1].depth == depth)
+                    {
+                        auto o = stack[$ - 1];
+                        if (o.overEnum && o.hasDefault)
+                            r.findings ~= Finding("SD014", f.path, o.line,
+                                "`switch` over an enum has a `default:`; use `final switch` and list the skipped members");
+                        stack = stack[0 .. $ - 1];
+                    }
+                    depth--;
+                }
+            }
+            labels(s[from .. $]);
+        }
+    }
+}
+
+// ---- SD015: null checks on class references --------------------------------
+
+private void sd015(const ref Config cfg, const Source[] files, ref Result r)
+{
+    if (cfg.severity("SD015") == Severity.off) return;
+    bool[string] classes;
+    auto decl = ctRegex!`(^|[^\w])(class|interface)[ \t]+([A-Z]\w*)`;
+    foreach (ref f; files)
+        foreach (ref l; f.lines)
+            if (auto m = matchFirst(l.code, decl))
+                if (!m[3].endsWith("Error") && !m[3].endsWith("Exception")) classes[m[3]] = true;
+
+    bool[string] local;     // file ~ "\0" ~ name
+    bool[string] member;
+    auto typed = ctRegex!`[^\w.]([A-Z]\w*)\)?[ \t]+([a-z_]\w*)[ \t]*[;=,)]`;
+    foreach (ref f; files)
+        foreach (ref l; f.lines)
+            foreach (m; matchAll(" " ~ l.code, typed))
+                if (m[1] in classes)
+                {
+                    local[f.path ~ "\0" ~ m[2]] = true;
+                    member[m[2]] = true;
+                }
+
+    bool counts(string file, string reference)
+    {
+        import std.string : lastIndexOf;
+        immutable dot = reference.lastIndexOf('.');
+        if (dot >= 0) return (reference[dot + 1 .. $] in member) !is null;
+        return (file ~ "\0" ~ reference in local) !is null;
+    }
+
+    Count c = Count("SD015", "class-null", "null checks on class references (use safed.option.Option)");
+    auto isNull = ctRegex!`([A-Za-z_][\w.]*)[ \t]*!?is[ \t]+null`;
+    auto ifRef = ctRegex!`if[ \t]*\([ \t]*(!|auto[ \t]+[A-Za-z_]\w*[ \t]*=)?[ \t]*([A-Za-z_][\w.]*)[ \t]*\)`;
+    foreach (ref f; files)
+    {
+        if (cfg.isTest(f.path) || cfg.allowed("SD015", f.path)) continue;
+        foreach (ref l; f.lines)
+        {
+            bool hit;
+            foreach (m; matchAll(l.code, isNull))
+                if (counts(f.path, m[1])) hit = true;
+            foreach (m; matchAll(l.code, ifRef))
+                if (counts(f.path, m[2])) hit = true;
+            if (hit)
+            {
+                c.count++;
+                c.where ~= at(f.path, l.number);
+            }
+        }
+    }
+    r.counts ~= c;
+}
+
+// ---- SD017: class declarations ----------------------------------------------
+
+/// A class declaration that counts against the budget: not an exception,
+/// and not a `static class` (helpers inside unittests).
+bool isClassDecl(string code)
+{
+    if (!matchFirst(code, ctRegex!`^\s*((final|abstract|private|public)\s+)*class\s+[A-Z]`)) return false;
+    return !matchFirst(code, ctRegex!`class\s+\w*(Error|Exception)\b|:\s*Exception`);
+}
+
+// ---- SD018: the null audit lists every module --------------------------------
+
+private void sd018(const ref Config cfg, const Source[] files, ref Result r)
+{
+    foreach (na; cfg.nullAudit)
+    {
+        import safed.check.config : underAny;
+        const(Source)* audit;
+        foreach (ref f; files)
+            if (f.path == na.module_) audit = &f;
+        if (audit is null)
+        {
+            r.findings ~= Finding("SD018", na.module_, 1, "the null-audit module named in safe-d.json doesn't exist");
+            return;
+        }
+        bool[string] imported;
+        auto si = ctRegex!`^\s*static\s+import\s+([\w.]+)\s*;`;
+        foreach (ref l; audit.lines)
+            if (auto m = matchFirst(l.code, si)) imported[m[1]] = true;
+        auto mod = ctRegex!`^\s*module\s+([\w.]+)\s*;`;
+        foreach (ref f; files)
+        {
+            if (cfg.isTest(f.path) || underAny(f.path, na.skip) || cfg.allowed("SD018", f.path)) continue;
+            foreach (ref l; f.lines)
+                if (auto m = matchFirst(l.code, mod))
+                {
+                    if (m[1] !in imported)
+                        r.findings ~= Finding("SD018", na.module_, 1,
+                            "add `static import " ~ m[1] ~ ";` (and the modules list) to the null-audit module");
+                    break;
+                }
+        }
+    }
+}
+
+// ---- SD021: dub.json keeps the compiler settings ------------------------------
+
+private void sd021(const ref Config cfg, const string[string] dubJsons, ref Result r)
+{
+    import std.json : JSONValue, JSONType, parseJSON, JSONException;
+    import std.algorithm : sort;
+    import std.array : array;
+    import safed.json : jsonGet;
+
+    string[] flagsOf(const ref JSONValue pkg, string key)
+    {
+        string[] out_;
+        if (auto v = jsonGet(pkg, key))
+            if (v.type == JSONType.array)
+                foreach (e; v.arrayNoRef)
+                    if (e.type == JSONType.string) out_ ~= e.str;
+        return out_;
+    }
+
+    void checkPackage(string file, const ref JSONValue pkg, string name, bool root)
+    {
+        void bad(string msg) { r.findings ~= Finding("SD021", file, 1, name ~ ": " ~ msg); }
+        if (auto t = jsonGet(pkg, "targetType"))
+            if (t.type == JSONType.string && t.str == "none") return;
+
+        auto flags = flagsOf(pkg, "dflags") ~ flagsOf(pkg, "dflags-ldc");
+        foreach (want; ["-preview=dip1000", "-preview=nosharedaccess"])
+            if (!flags.canFind(want)) bad("`dflags` must include `" ~ want ~ "`");
+        if (!flagsOf(pkg, "dflags-ldc").canFind("-fno-delete-null-pointer-checks"))
+            bad("`dflags-ldc` must include `-fno-delete-null-pointer-checks`");
+
+        auto tc = jsonGet(pkg, "toolchainRequirements");
+        string req(string compiler)
+        {
+            if (tc is null) return null;
+            if (auto v = jsonGet(*tc, compiler)) if (v.type == JSONType.string) return v.str;
+            return null;
+        }
+        if (req("dmd") != "no" || req("gdc") != "no")
+            bad("`toolchainRequirements` must set `\"dmd\": \"no\"` and `\"gdc\": \"no\"` (LDC only)");
+        if (!ldcAtLeast(req("ldc"), 1, 43))
+            bad("`toolchainRequirements.ldc` must require `>=1.43.0` or newer");
+
+        bool boundsOn;
+        if (auto bt = jsonGet(pkg, "buildTypes"))
+            if (auto rel = jsonGet(*bt, "release"))
+                boundsOn = (flagsOf(*rel, "dflags") ~ flagsOf(*rel, "dflags-ldc")).canFind("-boundscheck=on");
+        if (!boundsOn) bad("`buildTypes.release` must keep `-boundscheck=on` in its `dflags-ldc`");
+
+        if (root && cfg.requireHook)
+        {
+            bool hooked;
+            foreach (c; flagsOf(pkg, "preBuildCommands"))
+                if (c.canFind("SAFE_D_PACKAGE_DIR") || c.canFind("safe-d") || c.canFind("check-safe")) hooked = true;
+            if (!hooked) bad("`preBuildCommands` must run safe-d-check, so every build is checked");
+        }
+    }
+
+    foreach (file; dubJsons.keys.array.sort)
+    {
+        JSONValue root;
+        try root = parseJSON(dubJsons[file]);
+        catch (JSONException e)
+        {
+            r.findings ~= Finding("SD021", file, 1, "not valid JSON: " ~ e.msg);
+            continue;
+        }
+        string pname = "package";
+        if (auto n = jsonGet(root, "name")) if (n.type == JSONType.string) pname = n.str;
+        checkPackage(file, root, pname, true);
+        if (auto subs = jsonGet(root, "subPackages"))
+            if (subs.type == JSONType.array)
+                foreach (s; subs.arrayNoRef)
+                    if (s.type == JSONType.object)
+                    {
+                        string sname = pname ~ ":?";
+                        if (auto n = jsonGet(s, "name")) if (n.type == JSONType.string) sname = pname ~ ":" ~ n.str;
+                        checkPackage(file, s, sname, false);
+                    }
+    }
+}
+
+/// Whether a dub version requirement such as `>=1.43.0` admits only LDC
+/// `major.minor` or newer.
+bool ldcAtLeast(string req, int major, int minor)
+{
+    import std.conv : to, ConvException;
+    if (!req.startsWith(">=")) return false;
+    auto m = matchFirst(req[2 .. $].strip, ctRegex!`^(\d+)\.(\d+)`);
+    if (!m) return false;
+    try
+    {
+        immutable a = m[1].to!int, b = m[2].to!int;
+        return a > major || (a == major && b >= minor);
+    }
+    catch (ConvException e)
+        return false;   // digits that don't fit an int: not a version we can trust
+}
+
+unittest
+{
+    assert(ldcAtLeast(">=1.43.0", 1, 43) && ldcAtLeast(">=1.44.1", 1, 43) && ldcAtLeast(">=2.0.0", 1, 43));
+    assert(!ldcAtLeast(">=1.42.0", 1, 43) && !ldcAtLeast("~>1.43.0", 1, 43) && !ldcAtLeast(null, 1, 43));
+    assert(rawSubtractions("a - b; x[$ - 1]; f(c) - (d)") == 2);
+    assert(isClassDecl("final class Agent") && !isClassDecl("class FooException : Exception")
+        && !isClassDecl("static class Helper") && !isClassDecl("int class_;"));
+}

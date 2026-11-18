@@ -1,0 +1,6 @@
+{
+  "sources": ["source"],
+  "nullAudit": { "module": "source/{{module}}/null_audit_test.d", "skip": ["source/app.d"] },
+  "budgets": {
+  }
+}

@@ -1,0 +1,81 @@
+# Reusable Safe D gate. In a project:
+#
+#   jobs:
+#     safe-d:
+#       uses: camunda/safe-d/.github/workflows/safe-d.yml@v0
+#
+# It runs `dub test` (whose preBuildCommands run safe-d-check), then the
+# checker again with GitHub annotations, then D-Scanner. The checker is the
+# safe-d version the project depends on (dub.selections.json), never a
+# floating one, so CI and local builds agree.
+name: Safe D
+
+on:
+  workflow_call:
+    inputs:
+      ldc:
+        description: LDC version for setup-dlang
+        type: string
+        default: ldc-1.43.0
+      os:
+        description: JSON list of runners for the test matrix
+        type: string
+        default: '["ubuntu-24.04", "macos-15"]'
+      apt-packages:
+        description: Extra apt packages on Linux (e.g. libcurl4-openssl-dev zlib1g-dev)
+        type: string
+        default: ''
+      dscanner:
+        description: Run D-Scanner over `dscanner-paths` with the repo's dscanner.ini
+        type: boolean
+        default: true
+      dscanner-paths:
+        description: Space-separated source paths for D-Scanner
+        type: string
+        default: source
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: dub test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(inputs.os) }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dlang-community/setup-dlang@v2
+        with:
+          compiler: ${{ inputs.ldc }}
+      - name: Linux packages
+        if: runner.os == 'Linux' && inputs.apt-packages != ''
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ${{ inputs.apt-packages }}
+      - run: dub test
+
+  check:
+    name: safe-d-check
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dlang-community/setup-dlang@v2
+        with:
+          compiler: ${{ inputs.ldc }}
+      - name: Find the safe-d this project depends on
+        id: safed
+        run: |
+          set -euo pipefail
+          dub upgrade --missing-only -q
+          dir="$(dub describe --data-list --data=import-paths | grep '/safe-d/source/$' | sed 's|/source/$||' | head -1)"
+          if [ -z "$dir" ]; then
+            echo "::error::safe-d is not a dependency of this project (dub.json dependencies)"
+            exit 1
+          fi
+          echo "dir=$dir" >> "$GITHUB_OUTPUT"
+      - name: safe-d-check (annotations)
+        run: dub run -q --root "${{ steps.safed.outputs.dir }}" :check -- --root . --format github
+      - name: D-Scanner
+        if: inputs.dscanner
+        run: dub run -q dscanner@0.16.0-beta.5 -- --styleCheck --config dscanner.ini ${{ inputs.dscanner-paths }}

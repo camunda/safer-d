@@ -1,0 +1,31 @@
+{
+  "name": "{{name}}",
+  "description": "{{name}}: a Safe D project",
+  "license": "Apache-2.0",
+  "targetType": "executable",
+  "dependencies": {
+    "safe-d": "{{version}}"
+  },
+  "toolchainRequirements": {
+    "dmd": "no",
+    "gdc": "no",
+    "ldc": ">=1.43.0"
+  },
+  "dflags": [
+    "-allinst",
+    "-preview=dip1000",
+    "-preview=nosharedaccess"
+  ],
+  "dflags-ldc": [
+    "-fno-delete-null-pointer-checks"
+  ],
+  "buildTypes": {
+    "release": {
+      "buildOptions": ["releaseMode", "optimize", "inline"],
+      "dflags-ldc": ["-boundscheck=on"]
+    }
+  },
+  "preBuildCommands": [
+    "dub run -q --root \"$SAFE_D_PACKAGE_DIR\" :check -- --root \"$PACKAGE_DIR\""
+  ]
+}

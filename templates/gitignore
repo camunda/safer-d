@@ -1,0 +1,5 @@
+.dub/
+/{{name}}
+/{{name}}-test-*
+*.o
+*.obj

@@ -1,0 +1,9 @@
+.dub/
+/safe-d-check
+/safe-d-test-*
+/libsafe-d.a
+*.o
+*.obj
+node_modules/
+package-lock.json
+/safe-d-check-test-*

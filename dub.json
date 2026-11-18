@@ -1,0 +1,87 @@
+{
+  "name": "safe-d",
+  "description": "Safe D: the shared safety rules, checker and @safe building blocks for Camunda's D projects",
+  "license": "Apache-2.0",
+  "authors": [
+    "Camunda"
+  ],
+  "copyright": "Copyright © Camunda Services GmbH",
+  "targetType": "library",
+  "sourcePaths": [
+    "source"
+  ],
+  "importPaths": [
+    "source"
+  ],
+  "toolchainRequirements": {
+    "dmd": "no",
+    "gdc": "no",
+    "ldc": ">=1.43.0"
+  },
+  "dflags": [
+    "-allinst",
+    "-preview=dip1000",
+    "-preview=nosharedaccess"
+  ],
+  "dflags-ldc": [
+    "-fno-delete-null-pointer-checks"
+  ],
+  "buildTypes": {
+    "release": {
+      "buildOptions": [
+        "releaseMode",
+        "optimize",
+        "inline"
+      ],
+      "dflags-ldc": [
+        "-boundscheck=on"
+      ]
+    }
+  },
+  "subPackages": [
+    {
+      "name": "check",
+      "description": "safe-d-check: checks a D project against the Safe D rules",
+      "targetType": "executable",
+      "targetName": "safe-d-check",
+      "sourcePaths": [
+        "check/source"
+      ],
+      "importPaths": [
+        "check/source"
+      ],
+      "dependencies": {
+        "safe-d": "*"
+      },
+      "toolchainRequirements": {
+        "dmd": "no",
+        "gdc": "no",
+        "ldc": ">=1.43.0"
+      },
+      "dflags": [
+        "-allinst",
+        "-preview=dip1000",
+        "-preview=nosharedaccess"
+      ],
+      "dflags-ldc": [
+        "-fno-delete-null-pointer-checks"
+      ],
+      "buildTypes": {
+        "release": {
+          "buildOptions": [
+            "releaseMode",
+            "optimize",
+            "inline"
+          ],
+          "dflags-ldc": [
+            "-boundscheck=on",
+            "-link-defaultlib-shared=false"
+          ]
+        }
+      },
+      "stringImportPaths": [
+        "templates"
+      ]
+    }
+  ]
+}
