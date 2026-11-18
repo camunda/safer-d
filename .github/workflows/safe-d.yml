@@ -2,7 +2,7 @@
 #
 #   jobs:
 #     safe-d:
-#       uses: camunda/safe-d/.github/workflows/safe-d.yml@v0
+#       uses: camunda/safe-d/.github/workflows/safe-d.yml@v1
 #
 # It runs `dub test` (whose preBuildCommands run safe-d-check), then the
 # checker again with GitHub annotations, then D-Scanner. The checker is the

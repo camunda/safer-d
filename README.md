@@ -48,7 +48,7 @@ and CI:
 ```yaml
 jobs:
   safe-d:
-    uses: camunda/safe-d/.github/workflows/safe-d.yml@v0
+    uses: camunda/safe-d/.github/workflows/safe-d.yml@v1
     with:
       apt-packages: libcurl4-openssl-dev zlib1g-dev   # if you link curl
 ```

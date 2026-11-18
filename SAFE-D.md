@@ -260,7 +260,7 @@ only the budgets.
 ## Versioning the rules
 
 - A rule ID is never reused or renumbered.
-- From 0.1.0 on, a new rule ships as `warn` in a minor release and becomes an error in the
+- A new rule ships as `warn` in a minor release and becomes an error in the
   next minor, so a dependency bump never breaks a build without notice. Pin
   with `~>` in `dub.json`; `adopt` after a bump sets budgets for new counts.
 - Bug fixes that catch more (as when string mixins started counting) are

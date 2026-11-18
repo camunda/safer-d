@@ -1,8 +1,8 @@
 // safe-d releases are git tags: code.dlang.org picks up each `vX.Y.Z`, and
 // the floating `vX` tag moves with it for the reusable workflow. Nothing is
-// uploaded anywhere. Pre-1.0: versions stay 0.x (breaking -> minor), and a
-// rule that newly fails builds is a minor release (see SAFE-D.md). Cutting
-// 1.0.0 is a deliberate config change, not a side effect of a commit message.
+// uploaded anywhere. A breaking change (to the library API, safe-d.json or
+// the CLI) is a major release. A new rule is not: it ships as `warn` in a
+// minor and becomes an error one minor later (see SAFE-D.md).
 module.exports = {
   branches: ['main'],
   plugins: [
@@ -14,7 +14,6 @@ module.exports = {
           { type: 'fix', release: 'patch' },
           { type: 'perf', release: 'patch' },
           { type: 'revert', release: 'patch' },
-          { breaking: true, release: 'minor' },
         ],
       },
     ],
