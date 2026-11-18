@@ -62,7 +62,13 @@ struct Source
 }
 
 /// Lex `text` as the file at `path`.
-Source source(string path, string text) pure { return Source(path, lex(text)); }
+/// Lex `text` as the file at `path`. CRLF line endings (a Windows checkout
+/// with `core.autocrlf`) read the same as LF.
+Source source(string path, string text) pure
+{
+    import std.array : replace;
+    return Source(path, lex(text.replace("\r\n", "\n")));
+}
 
 /// One violation.
 struct Finding

@@ -127,9 +127,29 @@ private string[] strings(const ref JSONValue v, string key)
     foreach (e; v.arrayNoRef)
     {
         if (e.type != JSONType.string) throw new ConfigException("`" ~ key ~ "` must be an array of strings");
-        r ~= e.str;
+        r ~= normalisePath(e.str);
     }
     return r;
+}
+
+/// A path as the checker compares it: `/`-separated, no leading `./`, so a
+/// safe-d.json written on Windows (`source\\app\\io.d`) means the same.
+string normalisePath(string p) pure
+{
+    import std.array : replace;
+    import std.string : startsWith;
+
+    auto r = p.replace("\\", "/");
+    while (r.startsWith("./")) r = r[2 .. $];
+    return r;
+}
+
+unittest
+{
+    assert(normalisePath(`source\app\io.d`) == "source/app/io.d");
+    assert(normalisePath(`.\source`) == "source" && normalisePath("./source/") == "source/");
+    auto c = parseConfig(`{"ioModules":["src\\io.d"],"allow":{"SD020":[".\\src\\gen"]}}`);
+    assert(c.isIo("src/io.d") && c.allowed("SD020", "src/gen/x.d"));
 }
 
 /// Parse `safe-d.json` text.
