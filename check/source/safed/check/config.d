@@ -150,6 +150,10 @@ unittest
     assert(normalisePath(`.\source`) == "source" && normalisePath("./source/") == "source/");
     auto c = parseConfig(`{"ioModules":["src\\io.d"],"allow":{"SD020":[".\\src\\gen"]}}`);
     assert(c.isIo("src/io.d") && c.allowed("SD020", "src/gen/x.d"));
+    auto n = parseConfig(`{"nullAudit":{"module":".\\src\\na_test.d"}}`);
+    bool seen;
+    foreach (na; n.nullAudit) seen = na.module_ == "src/na_test.d";
+    assert(seen);
 }
 
 /// Parse `safe-d.json` text.
@@ -186,7 +190,7 @@ Config parseConfig(string text)
         if (auto m = jsonGet(*v, "module"))
         {
             if (m.type != JSONType.string) throw new ConfigException("`nullAudit.module` must be a string");
-            na.module_ = m.str;
+            na.module_ = normalisePath(m.str);
         }
         else throw new ConfigException("`nullAudit` needs a `module`");
         if (auto s = jsonGet(*v, "skip")) na.skip = strings(*s, "nullAudit.skip");

@@ -25,6 +25,7 @@ JSON
 cd "$APP"
 dub test -q
 out="$(dub run -q -- e2e)"
+out="${out%$'\r'}"  # Windows writeln emits CRLF
 [ "$out" = "hello, e2e" ] || { echo "e2e: unexpected output: $out" >&2; exit 1; }
 
 echo 'int planted() { return cast(int) 1.5; }' >> source/hello_safe/greet.d
