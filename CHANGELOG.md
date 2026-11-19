@@ -1,3 +1,10 @@
+## [1.0.1](https://github.com/camunda/safe-d/compare/v1.0.0...v1.0.1) (2026-11-19)
+
+
+### Bug Fixes
+
+* Windows paths and CRLF checkouts ([#1](https://github.com/camunda/safe-d/issues/1)) ([65e0177](https://github.com/camunda/safe-d/commit/65e01773051a60be6aab1e763a2adac4c24edc94))
+
 # 1.0.0 (2026-11-18)
 
 
