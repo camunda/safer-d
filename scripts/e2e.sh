@@ -5,6 +5,9 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# Git Bash on Windows spells paths /d/a/...; dub (a native program) needs
+# D:/a/... in the selections file.
+if command -v cygpath > /dev/null; then REPO_ROOT_NATIVE="$(cygpath -m "$REPO_ROOT")"; else REPO_ROOT_NATIVE="$REPO_ROOT"; fi
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 APP="$WORK/hello-safe"
@@ -14,7 +17,7 @@ cat > "$APP/dub.selections.json" <<JSON
 {
   "fileVersion": 1,
   "versions": {
-    "safe-d": {"path": "$REPO_ROOT"}
+    "safe-d": {"path": "$REPO_ROOT_NATIVE"}
   }
 }
 JSON
@@ -22,6 +25,7 @@ JSON
 cd "$APP"
 dub test -q
 out="$(dub run -q -- e2e)"
+out="${out%$'\r'}"  # Windows writeln emits CRLF
 [ "$out" = "hello, e2e" ] || { echo "e2e: unexpected output: $out" >&2; exit 1; }
 
 echo 'int planted() { return cast(int) 1.5; }' >> source/hello_safe/greet.d

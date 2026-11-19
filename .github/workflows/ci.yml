@@ -16,17 +16,23 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-15]
+        os: [ubuntu-24.04, macos-15, windows-latest]
     steps:
       - uses: actions/checkout@v5
       - uses: dlang-community/setup-dlang@v2
         with:
           compiler: ldc-1.43.0
-      - run: make test
+      # Plain dub and bash rather than make, so Windows runs the same steps.
+      - run: dub test -q
+        shell: bash
+      - run: dub test -q :check
+        shell: bash
       - name: safe-d checks itself
-        run: make self-check
+        shell: bash
+        run: dub build -q :check && ./safe-d-check --root .
       - name: init scaffolds a project that builds, tests and gates
-        run: make e2e
+        shell: bash
+        run: scripts/e2e.sh
 
   lint:
     name: D-Scanner

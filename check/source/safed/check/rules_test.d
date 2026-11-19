@@ -257,3 +257,14 @@ unittest // escapes hidden in string mixins are still seen
     assert(ids(r, "SD008") == ["SD008@5"]);
     assert(countOf(r, "SD020") == 1);
 }
+
+unittest // a CRLF checkout (Windows, core.autocrlf) gives the same findings as LF
+{
+    import std.array : replace;
+    enum text = "module a;\n@safe:\nvoid f() @trusted {}\nint g(M m) { switch (m) { case M.a: return 1; default: return 0; } }\n"
+        ~ "void h() {\n    try g(); catch (Exception) {}\n}\n";
+    auto lf = check([["a.d", text]]);
+    auto crlf = check([["a.d", text.replace("\n", "\r\n")]]);
+    assert(ids(lf) == ids(crlf), ids(crlf)[0]);
+    assert(ids(crlf, "SD001") == [] && ids(crlf, "SD006") == ["SD006@3"]);
+}

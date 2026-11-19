@@ -5,7 +5,22 @@ module safed.check.rules;
 
 @safe:
 
-import std.regex : ctRegex, matchAll, matchFirst, regex;
+import std.regex : matchAll, matchFirst, regex, Regex;
+
+/// `pattern`, compiled once per thread on first use. Not ctRegex: building
+/// these at compile time crashes LDC 1.43 on Windows (0xC000001D), and the
+/// run-time compile happens once per pattern either way.
+Regex!char re(string pattern)()
+{
+    static Regex!char compiled;
+    static bool ready;
+    if (!ready)
+    {
+        compiled = regex(pattern);
+        ready = true;
+    }
+    return compiled;
+}
 import std.algorithm : canFind, endsWith, startsWith;
 import std.string : strip, stripRight;
 import safed.check.config : Config, Severity;
@@ -62,7 +77,13 @@ struct Source
 }
 
 /// Lex `text` as the file at `path`.
-Source source(string path, string text) pure { return Source(path, lex(text)); }
+/// Lex `text` as the file at `path`. CRLF line endings (a Windows checkout
+/// with `core.autocrlf`) read the same as LF.
+Source source(string path, string text) pure
+{
+    import std.array : replace;
+    return Source(path, lex(text.replace("\r\n", "\n")));
+}
 
 /// One violation.
 struct Finding
@@ -104,23 +125,23 @@ Result runRules(const ref Config cfg, const Source[] files, const string[string]
     if (on("SD006")) sd006(cfg, files, r);
     if (on("SD007") || on("SD008")) sd007_008(cfg, files, r);
     countLines(cfg, files, r, "SD009", "`assumeIsolated` calls outside the io modules",
-        (f) => !cfg.isIo(f.path), (code) => countMatches(code, ctRegex!`\bassumeIsolated\(`), true);
+        (f) => !cfg.isIo(f.path), (code) => countMatches(code, re!`\bassumeIsolated\(`), true);
     if (on("SD010")) sd010(cfg, files, r);
     sd011(cfg, files, r);
     if (on("SD012")) sd012(cfg, files, r);
     countLines(cfg, files, r, "SD013", "`catch (Exception)` outside test files",
-        (f) => !cfg.isTest(f.path), (code) => matchFirst(code, ctRegex!`catch\s*\(\s*Exception\b`) ? 1 : 0);
+        (f) => !cfg.isTest(f.path), (code) => matchFirst(code, re!`catch\s*\(\s*Exception\b`) ? 1 : 0);
     if (on("SD014")) sd014(cfg, files, r);
     sd015(cfg, files, r);
     countLines(cfg, files, r, "SD016", "`Nullable!` uses outside test files (use safed.option.Option)",
-        (f) => !cfg.isTest(f.path), (code) => countMatches(code, ctRegex!`Nullable!`));
+        (f) => !cfg.isTest(f.path), (code) => countMatches(code, re!`Nullable!`));
     countLines(cfg, files, r, "SD017", "class declarations outside test files (exceptions aside)",
         (f) => !cfg.isTest(f.path), (code) => isClassDecl(code) ? 1 : 0);
     if (on("SD018")) sd018(cfg, files, r);
     countLines(cfg, files, r, "SD019", "`@nullable` marks outside test files",
-        (f) => !cfg.isTest(f.path), (code) => matchFirst(code, ctRegex!`^\s*@nullable\(`) ? 1 : 0);
+        (f) => !cfg.isTest(f.path), (code) => matchFirst(code, re!`^\s*@nullable\(`) ? 1 : 0);
     countLines(cfg, files, r, "SD020", "`cast(` outside the io modules and test files",
-        (f) => !cfg.isTest(f.path) && !cfg.isIo(f.path), (code) => countMatches(code, ctRegex!`(^|[^\w])cast\s*\(`), true);
+        (f) => !cfg.isTest(f.path) && !cfg.isIo(f.path), (code) => countMatches(code, re!`(^|[^\w])cast\s*\(`), true);
     if (on("SD021")) sd021(cfg, dubJsons, r);
     return r;
 }
@@ -179,8 +200,8 @@ private void sd001(const ref Config cfg, const Source[] files, ref Result r)
 
 private void sd002_003(const ref Config cfg, const Source[] files, ref Result r)
 {
-    auto label = ctRegex!`^\s*@(system|trusted)\s*:`;
-    auto system = ctRegex!`(^|[^\w])@system\b`;
+    auto label = re!`^\s*@(system|trusted)\s*:`;
+    auto system = re!`(^|[^\w])@system\b`;
     foreach (ref f; files)
         foreach (ref l; f.lines)
         {
@@ -189,7 +210,7 @@ private void sd002_003(const ref Config cfg, const Source[] files, ref Result r)
                 r.findings ~= Finding("SD002", f.path, l.number,
                     "`@system:`/`@trusted:` turn off @safe for the rest of a scope; mark the smallest function or lambda instead");
             else if (cfg.severity("SD003") != Severity.off && !cfg.allowed("SD003", f.path)
-                && matchFirst(text, system) && !matchFirst(text, ctRegex!`extern\s*\(\s*C\s*\)`))
+                && matchFirst(text, system) && !matchFirst(text, re!`extern\s*\(\s*C\s*\)`))
                 r.findings ~= Finding("SD003", f.path, l.number,
                     "`@system` is only allowed on `extern (C)` declarations; use @safe, or @trusted on the smallest function or lambda");
         }
@@ -197,7 +218,7 @@ private void sd002_003(const ref Config cfg, const Source[] files, ref Result r)
 
 private bool hasTrusted(string code)
 {
-    return !matchFirst(code, ctRegex!`(^|[^\w])@trusted\b`).empty;
+    return !matchFirst(code, re!`(^|[^\w])@trusted\b`).empty;
 }
 
 private void trustedCounts(const ref Config cfg, const Source[] files, ref Result r)
@@ -248,8 +269,8 @@ private void sd006(const ref Config cfg, const Source[] files, ref Result r)
 
 private void sd007_008(const ref Config cfg, const Source[] files, ref Result r)
 {
-    auto threads = ctRegex!`\bnew Thread\b|\bisDaemon\b|\bstd\.concurrency\b`;
-    auto global = ctRegex!`\b__gshared\b|(^|[^\w])union\b`;
+    auto threads = re!`\bnew Thread\b|\bisDaemon\b|\bstd\.concurrency\b`;
+    auto global = re!`\b__gshared\b|(^|[^\w])union\b`;
     foreach (ref f; files)
     {
         if (cfg.isIo(f.path)) continue;
@@ -288,8 +309,8 @@ private void sd010(const ref Config cfg, const Source[] files, ref Result r)
 size_t rawSubtractions(string code)
 {
     import std.regex : replaceAll;
-    auto s = replaceAll(code, ctRegex!`\$\s*-`, "");
-    return countMatches(s, ctRegex!`[\w)\]]\s+-\s+[\w(]`);
+    auto s = replaceAll(code, re!`\$\s*-`, "");
+    return countMatches(s, re!`[\w)\]]\s+-\s+[\w(]`);
 }
 
 private void sd011(const ref Config cfg, const Source[] files, ref Result r)
@@ -314,9 +335,9 @@ private void sd011(const ref Config cfg, const Source[] files, ref Result r)
 
 private void sd012(const ref Config cfg, const Source[] files, ref Result r)
 {
-    auto never = ctRegex!`catch\s*\(\s*(Throwable|Error)(\s|\))`;
-    auto head = ctRegex!`catch\s*\(\s*Exception(\s+(\w+))?\s*\)`;
-    auto throws = ctRegex!`(^|[^\w])throw([^\w]|$)`;
+    auto never = re!`catch\s*\(\s*(Throwable|Error)(\s|\))`;
+    auto head = re!`catch\s*\(\s*Exception(\s+(\w+))?\s*\)`;
+    auto throws = re!`(^|[^\w])throw([^\w]|$)`;
     foreach (ref f; files)
     {
         if (cfg.isTest(f.path) || cfg.allowed("SD012", f.path)) continue;
@@ -389,10 +410,10 @@ private void sd012(const ref Config cfg, const Source[] files, ref Result r)
 
 private void sd014(const ref Config cfg, const Source[] files, ref Result r)
 {
-    auto sw = ctRegex!`(^|[^\w])switch\s*\(`;
-    auto fin = ctRegex!`final\s+switch`;
-    auto enumCase = ctRegex!`(^|[^\w])case\s+[A-Z]\w*\.\w+`;
-    auto dflt = ctRegex!`(^|[^\w])default\s*:`;
+    auto sw = re!`(^|[^\w])switch\s*\(`;
+    auto fin = re!`final\s+switch`;
+    auto enumCase = re!`(^|[^\w])case\s+[A-Z]\w*\.\w+`;
+    auto dflt = re!`(^|[^\w])default\s*:`;
     struct Open { long depth; size_t line; bool overEnum, hasDefault; }
     foreach (ref f; files)
     {
@@ -448,7 +469,7 @@ private void sd015(const ref Config cfg, const Source[] files, ref Result r)
 {
     if (cfg.severity("SD015") == Severity.off) return;
     bool[string] classes;
-    auto decl = ctRegex!`(^|[^\w])(class|interface)[ \t]+([A-Z]\w*)`;
+    auto decl = re!`(^|[^\w])(class|interface)[ \t]+([A-Z]\w*)`;
     foreach (ref f; files)
         foreach (ref l; f.lines)
             if (auto m = matchFirst(l.code, decl))
@@ -456,7 +477,7 @@ private void sd015(const ref Config cfg, const Source[] files, ref Result r)
 
     bool[string] local;     // file ~ "\0" ~ name
     bool[string] member;
-    auto typed = ctRegex!`[^\w.]([A-Z]\w*)\)?[ \t]+([a-z_]\w*)[ \t]*[;=,)]`;
+    auto typed = re!`[^\w.]([A-Z]\w*)\)?[ \t]+([a-z_]\w*)[ \t]*[;=,)]`;
     foreach (ref f; files)
         foreach (ref l; f.lines)
             foreach (m; matchAll(" " ~ l.code, typed))
@@ -475,8 +496,8 @@ private void sd015(const ref Config cfg, const Source[] files, ref Result r)
     }
 
     Count c = Count("SD015", "class-null", "null checks on class references (use safed.option.Option)");
-    auto isNull = ctRegex!`([A-Za-z_][\w.]*)[ \t]*!?is[ \t]+null`;
-    auto ifRef = ctRegex!`if[ \t]*\([ \t]*(!|auto[ \t]+[A-Za-z_]\w*[ \t]*=)?[ \t]*([A-Za-z_][\w.]*)[ \t]*\)`;
+    auto isNull = re!`([A-Za-z_][\w.]*)[ \t]*!?is[ \t]+null`;
+    auto ifRef = re!`if[ \t]*\([ \t]*(!|auto[ \t]+[A-Za-z_]\w*[ \t]*=)?[ \t]*([A-Za-z_][\w.]*)[ \t]*\)`;
     foreach (ref f; files)
     {
         if (cfg.isTest(f.path) || cfg.allowed("SD015", f.path)) continue;
@@ -503,8 +524,8 @@ private void sd015(const ref Config cfg, const Source[] files, ref Result r)
 /// and not a `static class` (helpers inside unittests).
 bool isClassDecl(string code)
 {
-    if (!matchFirst(code, ctRegex!`^\s*((final|abstract|private|public)\s+)*class\s+[A-Z]`)) return false;
-    return !matchFirst(code, ctRegex!`class\s+\w*(Error|Exception)\b|:\s*Exception`);
+    if (!matchFirst(code, re!`^\s*((final|abstract|private|public)\s+)*class\s+[A-Z]`)) return false;
+    return !matchFirst(code, re!`class\s+\w*(Error|Exception)\b|:\s*Exception`);
 }
 
 // ---- SD018: the null audit lists every module --------------------------------
@@ -523,10 +544,10 @@ private void sd018(const ref Config cfg, const Source[] files, ref Result r)
             return;
         }
         bool[string] imported;
-        auto si = ctRegex!`^\s*static\s+import\s+([\w.]+)\s*;`;
+        auto si = re!`^\s*static\s+import\s+([\w.]+)\s*;`;
         foreach (ref l; audit.lines)
             if (auto m = matchFirst(l.code, si)) imported[m[1]] = true;
-        auto mod = ctRegex!`^\s*module\s+([\w.]+)\s*;`;
+        auto mod = re!`^\s*module\s+([\w.]+)\s*;`;
         foreach (ref f; files)
         {
             if (cfg.isTest(f.path) || underAny(f.path, na.skip) || cfg.allowed("SD018", f.path)) continue;
@@ -630,7 +651,7 @@ bool ldcAtLeast(string req, int major, int minor)
 {
     import std.conv : to, ConvException;
     if (!req.startsWith(">=")) return false;
-    auto m = matchFirst(req[2 .. $].strip, ctRegex!`^(\d+)\.(\d+)`);
+    auto m = matchFirst(req[2 .. $].strip, re!`^(\d+)\.(\d+)`);
     if (!m) return false;
     try
     {

@@ -50,7 +50,10 @@ ubyte[] readCapped(string path, ulong cap) @safe
             if (buf.length > cap) break;
             buf.length = cast(size_t) min(buf.length * 2, cap + 1);
         }
-        auto r = f.rawRead(buf[got .. $]);
+        // `@trusted`: rawRead is @safe on POSIX but @system on Windows only
+        // because it toggles the C stream to binary mode (_setmode); it
+        // reads into the bounds-checked slice it is given.
+        auto r = () @trusted { return f.rawRead(buf[got .. $]); }();
         if (!r.length) break;
         got += r.length;
     }
