@@ -1,3 +1,10 @@
+# [1.1.0](https://github.com/camunda/safe-d/compare/v1.0.1...v1.1.0) (2026-11-21)
+
+
+### Features
+
+* add safed.result (Result!(T, E), [@mustuse](https://github.com/mustuse)) and nothrow foreach for Option ([#2](https://github.com/camunda/safe-d/issues/2)) ([a27dc2b](https://github.com/camunda/safe-d/commit/a27dc2b15b8446e334448c9fdfc0db3efeed2b9d))
+
 ## [1.0.1](https://github.com/camunda/safe-d/compare/v1.0.0...v1.0.1) (2026-11-19)
 
 
