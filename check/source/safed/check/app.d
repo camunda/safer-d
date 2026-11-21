@@ -28,10 +28,12 @@ private enum usage = `safe-d-check ` ~ toolVersion ~ `: check a D project agains
 Usage:
   safe-d-check [check] [--root DIR] [--format text|github] [--ratchet]
       Check the project at DIR (default: .). Exit 1 on a violation or a
-      budget overrun. --ratchet lowers budgets the code now comes in under.
+      budget overrun. --ratchet lowers budgets the code now comes in under
+      and raises project-rule floors it now comes in over.
   safe-d-check adopt [--root DIR]
       Measure the project and write safe-d.json with budgets at today's
-      counts, so the rules hold from here on without a big-bang cleanup.
+      counts (and project-rule floors), so the rules hold from here on
+      without a big-bang cleanup.
   safe-d-check init DIR [--name NAME]
       Create a new Safe D project in DIR.
   safe-d-check rules
@@ -205,10 +207,41 @@ int runCheck(const ref Args a)
                     c.count, c.what, budget, c.budget, c.count);
         }
     }
+    foreach (fl; res.floors)
+    {
+        if (fl.count < fl.floor)
+        {
+            immutable sev = cfg.severity(fl.rule);
+            immutable level = sev == Severity.error ? "Error" : "Warning";
+            if (sev == Severity.error) failed = true;
+            emit(a.format, level, fl.rule, "safe-d.json", 1, format(
+                "%s matches, below the floor of %s (projectRules %s): %s; or justify the drop and lower the floor",
+                fl.count, fl.floor, fl.rule, fl.what));
+        }
+        else if (fl.count > fl.floor)
+        {
+            if (a.ratchet)
+            {
+                setFloor(cfg, fl.rule, fl.count);
+                lowered = true;
+                stdErr.writefln("safe-d-check: raised the %s floor from %s to %s", fl.rule, fl.floor, fl.count);
+            }
+            else
+                stdErr.writefln("safe-d-check: %s matches for %s, above the floor of %s; raise it to %s (or run with --ratchet)",
+                    fl.count, fl.rule, fl.floor, fl.count);
+        }
+    }
     if (lowered) write(buildPath(a.root, "safe-d.json"), renderConfig(cfg));
     if (!failed)
         stdErr.writefln("safe-d-check: %s files clean (%s rules)", files.length, allRules.length);
     return failed ? 1 : 0;
+}
+
+/// Set the floor of project rule `id`.
+private void setFloor(ref Config cfg, string id, long floor)
+{
+    foreach (ref p; cfg.projectRules)
+        if (p.id == id) p.floor = floor;
 }
 
 /// Run `adopt`: write safe-d.json with budgets at today's counts.
@@ -229,9 +262,11 @@ int runAdopt(const ref Args a)
     auto files = collect(a.root, cfg);
     auto res = runRules(cfg, files, dubFiles(a.root, cfg));
     foreach (c; res.counts) cfg.budgets[c.budget] = c.count;
+    foreach (fl; res.floors) setFloor(cfg, fl.rule, fl.count);
     write(buildPath(a.root, "safe-d.json"), renderConfig(cfg));
     stdErr.writefln("safe-d-check: wrote %s with budgets at today's counts:", buildPath(a.root, "safe-d.json"));
     foreach (c; res.counts) stdErr.writefln("  %-14s %5s  %s", c.budget, c.count, c.rule);
+    foreach (fl; res.floors) stdErr.writefln("  %-14s %5s  %s", "floor", fl.count, fl.rule);
     if (res.findings.length)
     {
         stdErr.writefln("%s violations still to fix (budgets can't absorb these):", res.findings.length);
