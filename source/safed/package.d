@@ -9,3 +9,4 @@ public import safed.concurrency;
 public import safed.io;
 public import safed.json;
 public import safed.option;
+public import safed.result;

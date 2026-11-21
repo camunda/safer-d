@@ -9,7 +9,7 @@
   "requireHook": false,
   "budgets": {
     "cast": 2,
-    "catch": 1,
+    "catch": 2,
     "class": 4,
     "class-null": 0,
     "isolation": 0,

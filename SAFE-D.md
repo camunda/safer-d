@@ -35,7 +35,7 @@ cost. The trade is deliberate, so here it is in full.
 | Aliasing | One `&mut` or many `&`; compile error. | Not checked. Mutable aliasing is memory-safe under the GC, but it allows logic bugs that Rust rules out (mutating a collection while something else reads it). **Weaker than Rust.** |
 | Null | No null; `Option<T>`. | Class references can be null. `Option`/`NotNull`, the null-audit unittest (SD018) and budgets on classes, null checks and `Nullable` (SD015–SD017, SD019) shrink it to counted, reviewed places. **Weaker than Rust**: enforced by the checker and a test, not by the types. |
 | Exhaustiveness | `match` must be exhaustive. | `final switch` must be, and SD014 bans `default:` in a switch over an enum. `SumType.match` is exhaustive. **Equivalent** once SD014 holds. |
-| Errors | `Result` and `?`; panics for bugs. | Exceptions. SD012 bans silent catches and catching `Error`/`Throwable`; SD013 caps catches. An error can still propagate without appearing in a signature. **Weaker than Rust.** |
+| Errors | `Result` and `?`; panics for bugs. | `safed.result.Result!(T, E)` is `@mustuse` (ignoring one is a compile error) and its value is reachable only through accessors that handle the error. With `nothrow`, the signature says what can fail. `?` is a two-word idiom (`foreach (e; r.take(v)) return typeof(return).err(e);`), not an operator. Code that still throws is held by SD012/SD013. **Close to Rust** where `Result` + `nothrow` are used; weaker where exceptions remain. |
 | Unsigned underflow | Panics in debug builds; wraps in release by default. | Wraps. `saturatingSub` and `checkedSub` (which halts), plus SD010/SD011 in the modules where it matters. **About equal**: in both, release builds are safe only where the code chose checked arithmetic. |
 | Casts | `as` truncates silently; `From`/`TryFrom` are checked. | `cast(` is budgeted (SD020); `std.conv.to` is checked. **Stricter than stock Rust**, which doesn't count `as`. |
 
@@ -43,7 +43,7 @@ In short, Safe D is:
 - **Equal** on memory safety and exhaustiveness.
 - **Stricter** on counting escape hatches.
 - **Weaker** on aliasing, data races outside `safed.concurrency`, null, and
-  errors in signatures. There the checker and its budgets do work that
+  errors in signatures where code still throws instead of returning a `Result`. There the checker and its budgets do work that
   Rust's types do.
 
 The gap is real. The budgets keep it visible and shrinking.
@@ -179,6 +179,40 @@ failures (SD012); give the reason in a `//` comment on or above it.
 (an assert, a range error, out of memory), and carrying on is unsafe. The
 catch budget (SD013) keeps error handling on the explicit path: return types,
 `Option`, `SumType`.
+
+#### `Result` instead of exceptions
+
+`safed.result.Result!(T, E)` is Rust's `Result`. A function that can fail
+returns one and is marked `nothrow`, so its signature lists everything that
+can go wrong:
+
+```d
+import safed.result;
+
+Result!(Config, string) load(string path) nothrow
+{
+    string text;
+    foreach (e; readFile(path).take(text)) return typeof(return).err(e); // `?`
+    return parseConfig(text);
+}
+
+load(path).match!(
+    cfg => run(cfg),
+    e => report(e),
+);
+```
+
+- `@mustuse`: calling `load(path);` without using the value is a compile
+  error. `cast(void) load(path);` discards it on purpose, and SD020 counts it.
+- The value is private. `match` (both cases), `take` (`?`), `foreach (v; r)`
+  (`if let Ok`), `map`, `mapErr`, `andThen`, `orElse`, `okOption` and
+  `errOption` all make you handle the error or say you're dropping it.
+  `unwrap("why")` halts with the reason.
+- `attempt!f(args)` runs throwing code (Phobos, a library) and returns a
+  `Result!(R, Exception)`, so the throw stops at the edge of your code.
+- No success value: `Result!(None, E)` with `typeof(return).ok(none)`.
+- What D can't do: `?` is an idiom, not an operator, and errors don't convert
+  between types implicitly (Rust's `From`). Convert in the `take` body.
 
 ### SD014: `final switch` over enums
 

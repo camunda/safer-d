@@ -70,8 +70,20 @@ struct Option(T)
         return present ? dg(value) : 0;
     }
 
+    /// ditto, usable in a `nothrow` function.
+    int opApply(scope int delegate(T) @safe nothrow dg) nothrow
+    {
+        return present ? dg(value) : 0;
+    }
+
     /// ditto, for a `const` or `immutable` Option (the value is `const`).
     int opApply(scope int delegate(const T) @safe dg) const
+    {
+        return present ? dg(value) : 0;
+    }
+
+    /// ditto, `const` and `nothrow`.
+    int opApply(scope int delegate(const T) @safe nothrow dg) const nothrow
     {
         return present ? dg(value) : 0;
     }
@@ -262,4 +274,19 @@ unittest
     static assert(!__traits(compiles, { Option!C o; o = null; }));
     // match needs both cases.
     static assert(!__traits(compiles, c.match!(x => x.n)));
+}
+
+// foreach works in nothrow code.
+unittest
+{
+    static int f(Option!int o) nothrow
+    {
+        int n;
+        foreach (x; o) n = x;
+        const c = o;
+        foreach (x; c) n += x;
+        return n;
+    }
+    assert(f(some(2)) == 4);
+    assert(f(Option!int(none)) == 0);
 }
