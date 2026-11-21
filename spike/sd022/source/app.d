@@ -30,6 +30,7 @@ import dmd.expression;
 import dmd.tokens : EXP;
 import dmd.location : SourceLoc;
 import dmd.console : Color;
+import dmd.dmodule : Module;
 import dmd.errors : DiagnosticHandler;
 import dmd.globals : global, FeatureState;
 
@@ -481,15 +482,17 @@ int main(string[] args)
 {
     // usage: sdspike <file.d>... -- <import paths>...
     string[] files, imports;
+    bool session;
     bool sep;
     foreach (a; args[1 .. $])
     {
         if (a == "--") { sep = true; continue; }
-        if (sep) imports ~= a; else files ~= a;
+        if (a == "--session") session = true;
+        else if (sep) imports ~= a; else files ~= a;
     }
 
     auto sw = StopWatch(AutoStart.yes);
-    if (files.length > 1)
+    if (files.length > 1 && !session)
     {
         // deinitializeDMD doesn't reset everything (types survive), so each
         // file gets a fresh process.
@@ -523,19 +526,60 @@ int main(string[] args)
 
     size_t compileErrors;
     Finding[] all;
+    DiagnosticHandler handler = delegate bool(ref const SourceLoc, Color, const(char)*, const(char)* fmt, va_list ap, const(char)*, const(char)*) nothrow {
+        compileErrors++;
+        if (compileErrors <= 5)
+        {
+            import core.stdc.stdio : fprintf, vfprintf, cstderr = stderr;
+            fprintf(cstderr, "  (compile) ");
+            vfprintf(cstderr, fmt, ap);
+            fprintf(cstderr, "\n");
+        }
+        return true;
+    };
+    if (session)
+    {
+        // One front-end session for the whole project, as the compiler
+        // driver does: parse every root, then run each pass over all roots.
+        import dmd.dsymbolsem : dsymbolSemantic, importAll, runDeferredSemantic, runDeferredSemantic2, runDeferredSemantic3;
+        import dmd.semantic2 : semantic2;
+        import dmd.semantic3 : semantic3;
+        initFrontend(handler);
+        global.params.useDIP1000 = FeatureState.enabled;
+        foreach (p; imports) addImport(p);
+        Module[] roots;
+        foreach (file; files)
+        {
+            auto t = parseModule(file, readText(file));
+            roots ~= t.module_;
+        }
+        const tParse = sw.peek;
+        foreach (m; roots) { m.importedFrom = m; m.importAll(null); }
+        foreach (m; roots) m.dsymbolSemantic(null);
+        runDeferredSemantic();
+        foreach (m; roots) m.semantic2(null);
+        runDeferredSemantic2();
+        foreach (m; roots) m.semantic3(null);
+        runDeferredSemantic3();
+        const tSema = sw.peek;
+        size_t[4] tot;
+        foreach (m; roots)
+        {
+            auto an = new Analyzer;
+            an.walk(m.members);
+            foreach (fi; an.findings) all ~= fi;
+            tot[0] += an.nFuncs; tot[1] += an.nLocals; tot[2] += an.nDerefs; tot[3] += an.nChecks;
+        }
+        foreach (fi; all) writefln("%s: Error: %s", fi.loc, fi.msg);
+        stderr.writefln("sdspike --session: %d file(s), %d finding(s), %d compile diagnostics; parse %s, semantic %s, total %s",
+            files.length, all.length, compileErrors, tParse, tSema - tParse, sw.peek);
+        stderr.writefln("coverage: %d functions, %d class-typed locals tracked, %d derefs of tracked locals checked, %d null checks used",
+            tot[0], tot[1], tot[2], tot[3]);
+        return all.length ? 1 : 0;
+    }
     foreach (file; files)
     {
-        initFrontend(delegate bool(ref const SourceLoc, Color, const(char)*, const(char)* fmt, va_list ap, const(char)*, const(char)*) nothrow {
-            compileErrors++;
-            if (compileErrors <= 5)
-            {
-                import core.stdc.stdio : fprintf, vfprintf, cstderr = stderr;
-                fprintf(cstderr, "  (compile) ");
-                vfprintf(cstderr, fmt, ap);
-                fprintf(cstderr, "\n");
-            }
-            return true;
-        });
+        initFrontend(handler);
         global.params.useDIP1000 = FeatureState.enabled;
         foreach (p; imports) addImport(p);
         auto t = parseModule(file, readText(file));
