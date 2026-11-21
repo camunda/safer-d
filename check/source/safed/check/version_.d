@@ -4,4 +4,4 @@ module safed.check.version_;
 @safe:
 
 /// SemVer of this safe-d release.
-enum toolVersion = "1.2.0";
+enum toolVersion = "1.3.0";

@@ -1,3 +1,10 @@
+# [1.3.0](https://github.com/camunda/safe-d/compare/v1.2.0...v1.3.0) (2026-11-21)
+
+
+### Features
+
+* **check:** project rules in safe-d.json, SD023 pure-core throws, SD024 test-only imports ([#6](https://github.com/camunda/safe-d/issues/6)) ([6a4b58e](https://github.com/camunda/safe-d/commit/6a4b58e64d15e91b31a9bbf540a6a15e08a24ce5)), closes [#5](https://github.com/camunda/safe-d/issues/5)
+
 # [1.2.0](https://github.com/camunda/safe-d/compare/v1.1.0...v1.2.0) (2026-11-21)
 
 
