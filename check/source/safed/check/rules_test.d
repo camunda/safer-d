@@ -268,3 +268,54 @@ unittest // a CRLF checkout (Windows, core.autocrlf) gives the same findings as 
     assert(ids(lf) == ids(crlf), ids(crlf)[0]);
     assert(ids(crlf, "SD001") == [] && ids(crlf, "SD006") == ["SD006@3"]);
 }
+
+private string[] whereOf(const Result r, string rule)
+{
+    foreach (c; r.counts)
+        if (c.rule == rule) return c.where.dup;
+    return null;
+}
+
+unittest // SD022
+{
+    auto r = check([["a.d", ok                                   // 1
+        ~ "class C { int x; }\ninterface I {}\n"                     // 2-3
+        ~ "struct S { C field; }\n"                                  // 4: a field: SD018's
+        ~ "C global;\n"                                              // 5: a global: SD018's
+        ~ "int f(C p, bool b) {\n"                                   // 6: a parameter
+        ~ "    C a;\n"                                               // 7: count
+        ~ "    C n = null;\n"                                        // 8: count
+        ~ "    C made = new C;\n"                                    // 9
+        ~ "    C fromCall = p;\n"                                    // 10
+        ~ "    made = null;\n"                                       // 11: count
+        ~ "    auto either = b ? made : null;\n"                     // 12: count
+        ~ "    C picked = b ? null : p;\n"                           // 13: count
+        ~ "    if (made == null) {}\n"                               // 14: a check: SD015's
+        ~ "    int count;\n"                                         // 15: not a class
+        ~ "    I i;\n"                                               // 16: count
+        ~ "    static if (true) { C inner; }\n"                      // 17: count
+        ~ "    // C commented;\n"                                    // 18
+        ~ "    auto got = g(b ? made : null);\n"                      // 19: an argument
+        ~ "    return made.x;\n"                                     // 20
+        ~ "}\n"
+        ~ "version (all) { C versioned; }\n"                         // 22: a global
+        ~ "class D { C member; void g() { C local; } }\n"]]);        // 23: count the local only
+    { import std.conv : to; assert(countOf(r, "SD022") == 8, whereOf(r, "SD022").to!string); }
+    { import std.conv : to; auto w = whereOf(r, "SD022"); assert(w == ["a.d(7)", "a.d(8)", "a.d(11)", "a.d(12)", "a.d(13)", "a.d(16)", "a.d(17)", "a.d(23)"], w.to!string); }
+    // Not counted: `auto` that isn't visibly a class, `is null` in a branch,
+    // fields of a struct nested in a function, unittest blocks.
+    auto quiet = check([["a.d", ok ~ "class C {}\nvoid f(int[string] o, bool b, C c) {\n"
+        ~ "    auto p = b ? \"k\" in o : null;\n"
+        ~ "    auto q = b ? c is null : false;\n"
+        ~ "    static struct S { C field; }\n"
+        ~ "    auto r = b ? new C : null;\n"                         // 7: count
+        ~ "    auto s = b ? null : c;\n"                             // 8: count
+        ~ "    auto u = b ? null : c.child;\n"                       // 9: type not visible
+        ~ "}\nunittest { C t; }\n"]]);
+    { import std.conv : to; auto w = whereOf(quiet, "SD022"); assert(w == ["a.d(7)", "a.d(8)"], w.to!string); }
+    // Test files and allowed files don't count.
+    auto t = check([["a_test.d", ok ~ "class C {}\nvoid f() { C c; }\n"]]);
+    assert(countOf(t, "SD022") == 0);
+    auto allowed = check(`{"allow":{"SD022":["a.d"]}}`, [["a.d", ok ~ "class C {}\nvoid f() { C c; }\n"]]);
+    assert(countOf(allowed, "SD022") == 0);
+}

@@ -18,7 +18,7 @@ as the checker.
 | `source/safed/` | Library: the safe replacements the rules point to. |
 | `source/safed/{io,concurrency,json}.d` | The io modules: the only place `@trusted` is expected. |
 | `check/source/safed/check/lexer.d` | Strips comments and literals and keeps string-mixin text. Rules match code, never raw lines. |
-| `check/source/safed/check/rules.d` | SD001–SD021. |
+| `check/source/safed/check/rules.d` | SD001–SD022. |
 | `check/source/safed/check/rules_test.d` | One test per rule: a hit and a near miss. |
 | `check/source/safed/check/config.d` | `safe-d.json`. |
 | `check/source/safed/check/scaffold.d` + `templates/` | `init`. Templates are compiled in (`stringImportPaths`). |

@@ -126,6 +126,7 @@ rules and the library that answers them.
 | SD019 | budget `nullable-mark` | `@nullable("why")` marks. |
 | SD020 | budget `cast` | `cast(` outside the io modules. |
 | SD021 | ban | `dub.json` keeps the compiler settings above. |
+| SD022 | budget `null-local` | Class-typed locals that start or become null. |
 
 ### SD001–SD003: `@safe` everywhere
 
@@ -238,6 +239,18 @@ reference that has been checked.
   any field or global is a bare class reference (not `Option`, `NotNull` or
   marked `@nullable("why")`). SD018 makes sure the audit module imports every
   module, so a new one can't skip it; SD019 counts the marks.
+- SD022 counts the ways a class-typed local in a function body becomes
+  null: `C c;` without an initialiser, `C c = null;`, `c = null;`, and
+  `null` as a branch of a `?:` it is set from. Initialise the local where
+  it is declared, from `new` or a call, or use `Option!C` when absence is
+  real. Then the local can't be dereferenced while null. A type-aware
+  analysis that proved each dereference was spiked
+  ([safe-d#3](https://github.com/camunda/safe-d/issues/3)): it caught one
+  more case (a dereference inside an `is null` branch) at 100–280 MB a
+  file. Banning the pattern costs nothing. The rule reads text, so an
+  `auto` local counts only when its non-null branch is visibly a class
+  (`new C`, or a known class-typed local or parameter). Test files and
+  `unittest` blocks don't count.
 
 ### SD020: casts
 

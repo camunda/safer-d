@@ -58,6 +58,7 @@ static immutable Rule[] allRules = [
     Rule("SD019", "nullable-mark", "`@nullable(\"why\")` marks are capped"),
     Rule("SD020", "cast", "`cast(` outside the io modules is capped"),
     Rule("SD021", null, "dub.json keeps the Safe D compiler settings"),
+    Rule("SD022", "null-local", "class-typed locals that start or become null are capped; initialise them, or use safed.option.Option"),
 ];
 
 /// The rule with `id`.
@@ -143,6 +144,7 @@ Result runRules(const ref Config cfg, const Source[] files, const string[string]
     countLines(cfg, files, r, "SD020", "`cast(` outside the io modules and test files",
         (f) => !cfg.isTest(f.path) && !cfg.isIo(f.path), (code) => countMatches(code, re!`(^|[^\w])cast\s*\(`), true);
     if (on("SD021")) sd021(cfg, dubJsons, r);
+    sd022(cfg, files, r);
     return r;
 }
 
@@ -465,15 +467,22 @@ private void sd014(const ref Config cfg, const Source[] files, ref Result r)
 
 // ---- SD015: null checks on class references --------------------------------
 
-private void sd015(const ref Config cfg, const Source[] files, ref Result r)
+/// Names of the project's classes and interfaces (exceptions aside).
+private bool[string] classNames(const Source[] files)
 {
-    if (cfg.severity("SD015") == Severity.off) return;
     bool[string] classes;
     auto decl = re!`(^|[^\w])(class|interface)[ \t]+([A-Z]\w*)`;
     foreach (ref f; files)
         foreach (ref l; f.lines)
             if (auto m = matchFirst(l.code, decl))
                 if (!m[3].endsWith("Error") && !m[3].endsWith("Exception")) classes[m[3]] = true;
+    return classes;
+}
+
+private void sd015(const ref Config cfg, const Source[] files, ref Result r)
+{
+    if (cfg.severity("SD015") == Severity.off) return;
+    auto classes = classNames(files);
 
     bool[string] local;     // file ~ "\0" ~ name
     bool[string] member;
@@ -669,4 +678,148 @@ unittest
     assert(rawSubtractions("a - b; x[$ - 1]; f(c) - (d)") == 2);
     assert(isClassDecl("final class Agent") && !isClassDecl("class FooException : Exception")
         && !isClassDecl("static class Helper") && !isClassDecl("int class_;"));
+}
+
+// ---- SD022: class-typed locals that start or become null ---------------------
+
+/// Which kind of scope each `{` on the way to a line opened.
+private enum Scope : ubyte { module_, aggregate, function_, test }
+
+/// Whether a block header opens an aggregate (its `{` holds fields).
+private bool opensAggregate(string header)
+{
+    return !matchFirst(header,
+        re!`(^|[\s;}])((final|abstract|private|public|package|protected|static|extern\s*\([^)]*\)|@\w+)\s+)*(struct|class|interface|union|template|enum)\b`).empty;
+}
+
+/// Whether a block header only groups declarations (`static if`, `version`,
+/// attribute blocks): the block is the same kind of scope as its parent.
+private bool groupsDeclarations(string header)
+{
+    return !matchFirst(header,
+        re!`^\s*(static\s+if|static\s+foreach|version|debug|else|extern|private|public|package|protected|shared|static|@\w+)\b|^\s*$`).empty;
+}
+
+/// The scope of every character of each line's code in `f`. Braces in
+/// strings and comments are already gone from `Line.code`.
+private Scope[][] charScopes(const ref Source f)
+{
+    Scope[] stack = [Scope.module_];
+    Scope[][] at;
+    at.length = f.lines.length;
+    string header;
+    foreach (i, ref l; f.lines)
+    {
+        at[i].length = l.code.length;
+        foreach (j, ch; l.code)
+        {
+            at[i][j] = stack[$ - 1];
+            if (ch == '{')
+            {
+                const parent = stack[$ - 1];
+                Scope next;
+                if (parent == Scope.test || !matchFirst(header, re!`^\s*unittest\b`).empty) next = Scope.test;
+                else if (opensAggregate(header)) next = Scope.aggregate;
+                else if (parent == Scope.function_) next = Scope.function_;
+                else if (groupsDeclarations(header)) next = parent;
+                else next = Scope.function_;
+                stack ~= next;
+                header = null;
+            }
+            else if (ch == '}')
+            {
+                if (stack.length > 1) stack = stack[0 .. $ - 1];
+                header = null;
+            }
+            else if (ch == ';') header = null;
+            else header ~= ch;
+        }
+        header ~= ' ';
+    }
+    return at;
+}
+
+/// SD022: inside function bodies, count the ways a class-typed local becomes
+/// null: declared without an initialiser (`C c;`), initialised or assigned
+/// `null` (`C c = null;`, `c = null;`, `auto c = b ? x : null;`). A local
+/// that is always initialised from `new` or a call can't start null, and
+/// absence that is real belongs in `Option!C`. Fields and globals are the
+/// null audit's (SD018/SD019); null checks are SD015's.
+private void sd022(const ref Config cfg, const Source[] files, ref Result r)
+{
+    if (cfg.severity("SD022") == Severity.off) return;
+    auto classes = classNames(files);
+    Count c = Count("SD022", "null-local", "class-typed locals that start or become null (initialise them, or use safed.option.Option)");
+    auto noInit = re!`(^|[^\w.!])([A-Z]\w*)[ \t]+([a-z_]\w*)[ \t]*;`;
+    auto typedInit = re!`(^|[^\w.!])([A-Z]\w*)[ \t]+([a-z_]\w*)[ \t]*=[ \t]*([^=;][^;]*)`;
+    auto autoInit = re!`(^|[^\w.])(auto|const|immutable)[ \t]+([a-z_]\w*)[ \t]*=[ \t]*([^=;][^;]*)`;
+    auto assign = re!`(^|[^\w.])([a-z_]\w*)[ \t]*=[ \t]*([^=;][^;]*)`;
+    // `null` as the value, or as a branch of `?:`.
+    // The top level of `rhs`: not inside a call's arguments, an index or a
+    // lambda.
+    string topLevel(string rhs)
+    {
+        string top;
+        int depth;
+        foreach (ch; rhs)
+        {
+            if (ch == '(' || ch == '[' || ch == '{') depth++;
+            else if (ch == ')' || ch == ']' || ch == '}') { if (depth) depth--; }
+            else if (!depth) top ~= ch;
+        }
+        return top;
+    }
+    // `null` as the whole value, or as a whole branch of a top-level `?:`.
+    bool nullValue(string rhs)
+    {
+        return !matchFirst(topLevel(rhs), re!`^\s*null\s*$|\?\s*null\s*:|:\s*null\s*$`).empty;
+    }
+    foreach (ref f; files)
+    {
+        if (cfg.isTest(f.path) || cfg.allowed("SD022", f.path)) continue;
+        auto scopes = charScopes(f);
+        bool[string] locals; // class-typed locals seen in this file
+        foreach (i, ref l; f.lines)
+        {
+            // Whether the match `m` sits in a function body (group 1 is the
+            // boundary before it, in the same scope).
+            bool inBody(M)(M m)
+            {
+                const off = m.pre.length + m[1].length;
+                return off < scopes[i].length && scopes[i][off] == Scope.function_;
+            }
+            size_t n;
+            // Class-typed parameters: known class references, not counted.
+            foreach (m; matchAll(l.code, re!`(^|[^\w.!])([A-Z]\w*)[ \t]+([a-z_]\w*)[ \t]*[,)]`))
+                if (m[2] in classes) locals[m[3]] = true;
+            foreach (m; matchAll(l.code, noInit))
+                if (m[2] in classes && inBody(m)) { locals[m[3]] = true; n++; }
+            foreach (m; matchAll(l.code, typedInit))
+                if (m[2] in classes && inBody(m))
+                {
+                    locals[m[3]] = true;
+                    if (nullValue(m[4])) n++;
+                }
+            // `auto x = b ? y : null`: the type isn't written, so count it only
+            // when the other branch is visibly a class (`new C`, `C.make()`,
+            // or a class-typed local).
+            foreach (m; matchAll(l.code, autoInit))
+                if (nullValue(m[4]) && inBody(m))
+                    if (auto br = matchFirst(topLevel(m[4]), re!`\?\s*(.*?)\s*:\s*(.*?)\s*$`))
+                    {
+                        const other = br[1] == "null" ? br[2] : br[1];
+                        if (auto id = matchFirst(other, re!`^(new\s+)?([A-Za-z_]\w*)$`))
+                            if (id[2] in classes || id[2] in locals) { locals[m[3]] = true; n++; }
+                    }
+            if (!n)
+                foreach (m; matchAll(l.code, assign))
+                    if (m[2] in locals && nullValue(m[3]) && inBody(m)) n++;
+            if (n)
+            {
+                c.count += n;
+                c.where ~= at(f.path, l.number);
+            }
+        }
+    }
+    r.counts ~= c;
 }
