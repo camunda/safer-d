@@ -12,10 +12,11 @@ static import safed.io;
 static import safed.json;
 static import safed.nullaudit;
 static import safed.option;
+static import safed.result;
 
 unittest
 {
     auto bare = auditModules!(safed.arith, safed.concurrency, safed.io, safed.json, safed.nullaudit,
-        safed.option)();
+        safed.option, safed.result)();
     assert(bare.length == 0, imported!"std.array".join(bare, "\n"));
 }

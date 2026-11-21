@@ -11,7 +11,7 @@ One dub package, two parts:
 
 | Part | What |
 | --- | --- |
-| `safe-d` (library) | The safe replacements the rules point to: `safed.option` (`Option`, `NotNull`), `safed.arith` (`saturatingSub`, `checkedSub`/`Add`/`Mul`), `safed.nullaudit`, `safed.concurrency` (`spawn`, `Locked`, `Chan`), `safed.io`, `safed.json`. Phobos only, all `@safe`. |
+| `safe-d` (library) | The safe replacements the rules point to: `safed.option` (`Option`, `NotNull`), `safed.result` (`Result`, `attempt`), `safed.arith` (`saturatingSub`, `checkedSub`/`Add`/`Mul`), `safed.nullaudit`, `safed.concurrency` (`spawn`, `Locked`, `Chan`), `safed.io`, `safed.json`. Phobos only, all `@safe`. |
 | `safe-d:check` | `safe-d-check`: checks a project (SD001–SD021), measures one (`adopt`), creates one (`init`). |
 
 Seeded from nano-coder-d's `check-safe.sh`, the strictest of the set, and
