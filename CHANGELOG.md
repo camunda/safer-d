@@ -1,3 +1,14 @@
+# [2.0.0](https://github.com/camunda/safer-d/compare/v1.3.0...v2.0.0) (2026-11-21)
+
+
+* feat!: rename safe-d to safer-d ([#7](https://github.com/camunda/safer-d/issues/7)) ([49fe1ed](https://github.com/camunda/safer-d/commit/49fe1ed2a94b03ff05e10ef9a803d663db930d23))
+
+
+### BREAKING CHANGES
+
+* package, module, binary and config names change from
+safe-d/safed to safer-d/safer. See README "Moving from safe-d (1.x)".
+
 # [1.3.0](https://github.com/camunda/safe-d/compare/v1.2.0...v1.3.0) (2026-11-21)
 
 
