@@ -30,6 +30,10 @@ import dmd.expression;
 import dmd.tokens : EXP;
 import dmd.location : SourceLoc;
 import dmd.console : Color;
+import dmd.visitor : SemanticTimeTransitiveVisitor;
+import dmd.astcodegen : ASTCodegen;
+import dmd.astenums : STC;
+import dmd.mtype : Type;
 import dmd.dmodule : Module;
 import dmd.errors : DiagnosticHandler;
 import dmd.globals : global, FeatureState;
@@ -478,16 +482,152 @@ void initFrontend(DiagnosticHandler h)
     foreach (id; ["LDC", "LDC_LLVM_23"]) VersionCondition.addPredefinedGlobalIdent(id.ptr);
 }
 
+/// Pre-filter: can SD022 find anything in this body? A tracked local only
+/// becomes null through a class-typed declaration without an initialiser, or
+/// `null` assigned (directly or as a `?:` branch) or used as an initialiser.
+/// Calls, returns, arguments and `is null` tests don't create null states.
+/// String mixins could hide either, so they count too. Runs on the parse
+/// tree of the body; `classNames` comes from the declaration passes.
+extern (C++) final class NeedsAnalysis : SemanticTimeTransitiveVisitor
+{
+    alias visit = SemanticTimeTransitiveVisitor.visit;
+    bool hit;
+    const(bool[string])* classNames;
+    bool[string] locals; // declared in this body so far
+
+    bool isLocal(Expression e)
+    {
+        if (auto id = e ? e.isIdentifierExp() : null) return (id.ident.toString() in locals) !is null;
+        return false;
+    }
+    override void visit(ASTCodegen.IdentityExp e)
+    {
+        // `c is null` on a local: the true branch is a null state.
+        if ((e.e2 && e.e2.isNullExp() && isLocal(e.e1)) || (e.e1 && e.e1.isNullExp() && isLocal(e.e2))) hit = true;
+        super.visit(e);
+    }
+
+    static bool hasNull(Expression e)
+    {
+        if (e is null) return false;
+        if (e.isNullExp()) return true;
+        if (auto c = e.isCondExp()) return hasNull(c.e1) || hasNull(c.e2);
+        if (auto c = e.isCastExp()) return hasNull(c.e1);
+        return false;
+    }
+    bool isClassName(Type t)
+    {
+        if (t is null) return false;
+        if (auto ti = t.isTypeIdentifier())
+            return (ti.ident.toString() in *classNames) !is null;
+        return false;
+    }
+    override void visit(ASTCodegen.MixinStatement) { hit = true; }
+    override void visit(ASTCodegen.MixinExp) { hit = true; }
+    override void visit(ASTCodegen.AssignExp e)
+    {
+        if (hasNull(e.e2)) hit = true;
+        super.visit(e);
+    }
+    override void visit(ASTCodegen.VarDeclaration d)
+    {
+        locals[d.ident.toString().idup] = true;
+        auto ei = d._init ? d._init.isExpInitializer() : null;
+        if (d._init is null && isClassName(d.type)) hit = true;
+        else if (ei && hasNull(ei.exp) && (d.type is null || isClassName(d.type))) hit = true;
+        super.visit(d);
+    }
+}
+
+/// Names of every class and interface (and alias of one) in the loaded
+/// modules, after the declaration passes.
+bool[string] collectClassNames()
+{
+    bool[string] names;
+    void walk(Dsymbols* members)
+    {
+        if (members is null) return;
+        foreach (d; *members)
+        {
+            if (d is null) continue;
+            if (auto c = d.isClassDeclaration()) { names[c.ident.toString().idup] = true; walk(c.members); continue; }
+            if (auto a = d.isAliasDeclaration())
+            {
+                if (a.type && a.type.ty == Ty.Tclass) names[a.ident.toString().idup] = true;
+                continue;
+            }
+            if (auto ad = d.isAttribDeclaration()) { walk(ad.decl); continue; }
+            if (auto ag = d.isAggregateDeclaration()) { walk(ag.members); continue; }
+            if (auto td = d.isTemplateDeclaration())
+            {
+                // `class Foo(T)` is a template wrapping a class of the same name.
+                if (td.onemember && td.onemember.isClassDeclaration()) names[td.ident.toString().idup] = true;
+            }
+        }
+    }
+    foreach (m; Module.amodules) walk(m.members);
+    names["Object"] = true; names["Throwable"] = true; names["Exception"] = true; names["Error"] = true;
+    return names;
+}
+
+// Spike: keep the GC heap close to live data (default grows ~2x).
+extern (C) __gshared string[] rt_options = ["gcopt=heapSizeFactor:1.2 minPoolSize:4 incPoolSize:4 maxPoolSize:16"];
+
+struct RU { long[4] times; long maxrss; long[13] rest; } // macOS struct rusage
+extern (C) int getrusage(int, RU*) nothrow @nogc @system;
+
+struct StubStats { size_t kept, stubbed; }
+
+/// Drop the bodies SD022 can't report on, before semantic, so their
+/// template instantiations are never built. Only for functions whose
+/// signature doesn't depend on the body (explicit return type, not a
+/// template or literal): they become plain declarations.
+void stubBodies(Dsymbols* members, ref StubStats st, const ref bool[string] classNames)
+{
+    if (members is null) return;
+    foreach (d; *members)
+    {
+        if (d is null) continue;
+        if (d.isTemplateDeclaration()) continue;
+        if (auto ad = d.isAttribDeclaration()) { stubBodies(ad.decl, st, classNames); continue; }
+        if (auto ag = d.isAggregateDeclaration()) { stubBodies(ag.members, st, classNames); continue; }
+        auto fd = d.isFuncDeclaration();
+        if (fd is null || fd.fbody is null || fd.isFuncLiteralDeclaration()) continue;
+        auto tf = fd.type ? fd.type.isTypeFunction() : null;
+        if (tf is null || tf.next is null || (fd.storage_class & STC.auto_))
+        {
+            st.kept++;
+            import std.process : environment;
+            if (environment.get("SDKEPT")) { import std.stdio : writefln; writefln("kept(sig): %s %s", fd.toChars().fromStringz, fd.loc.toChars().fromStringz); }
+            continue;
+        }
+        auto v = new NeedsAnalysis;
+        v.classNames = &classNames;
+        fd.fbody.accept(v);
+        if (v.hit)
+        {
+            st.kept++;
+            import std.process : environment;
+            if (environment.get("SDKEPT")) { import std.stdio : writefln; writefln("kept: %s %s", fd.toChars().fromStringz, fd.loc.toChars().fromStringz); }
+            continue;
+        }
+        fd.fbody = null;
+        fd.frequires = null; fd.fensures = null; fd.frequire = null; fd.fensure = null;
+        st.stubbed++;
+    }
+}
+
 int main(string[] args)
 {
     // usage: sdspike <file.d>... -- <import paths>...
     string[] files, imports;
-    bool session;
+    bool session, full;
     bool sep;
     foreach (a; args[1 .. $])
     {
         if (a == "--") { sep = true; continue; }
         if (a == "--session") session = true;
+        else if (a == "--full") full = true;
         else if (sep) imports ~= a; else files ~= a;
     }
 
@@ -501,13 +641,25 @@ int main(string[] args)
         import std.conv : to;
         size_t findings, diags, failed;
         size_t[4] tot;
+        size_t maxRss; string maxFile; size_t[] rssAll;
+        import std.typecons : Tuple, tuple;
+        Tuple!(size_t, string)[] rssBy;
         foreach (file; files)
         {
-            auto r = execute([args[0], file, "--"] ~ imports);
+            auto r = execute([args[0], file] ~ (full ? ["--full"] : []) ~ ["--"] ~ imports);
             foreach (line; r.output.lineSplitter)
             {
                 if (line.indexOf(": Error: SD022") >= 0) { writeln(line); findings++; }
                 else if (line.startsWith("sdspike: ")) {}
+                else if (line.startsWith("rss: "))
+                {
+                    import std.array : split;
+                    auto w = line["rss: ".length .. $].split;
+                    const mb = w[0].to!size_t;
+                    if (mb > maxRss) { maxRss = mb; maxFile = w[1]; }
+                    rssAll ~= mb;
+                    rssBy ~= tuple(size_t(mb), w[1].idup);
+                }
                 else if (line.startsWith("stats: "))
                 {
                     import std.array : split;
@@ -521,6 +673,19 @@ int main(string[] args)
             files.length, findings, diags, failed, sw.peek);
         stderr.writefln("coverage: %d functions, %d class-typed locals tracked, %d derefs of tracked locals checked, %d null checks used",
             tot[0], tot[1], tot[2], tot[3]);
+        {
+            import std.algorithm : sort;
+            rssAll.sort;
+            import std.process : environment;
+            if (environment.get("SDTOP"))
+            {
+                rssBy.sort!((a, b) => a[0] > b[0]);
+                foreach (x; rssBy[0 .. rssBy.length < 10 ? rssBy.length : 10]) stderr.writefln("  %4d MB %s", x[0], x[1]);
+            }
+            if (rssAll.length)
+                stderr.writefln("rss per file: median %d MB, p90 %d MB, max %d MB (%s)",
+                    rssAll[$ / 2], rssAll[$ * 9 / 10], maxRss, maxFile);
+        }
         return findings ? 1 : 0;
     }
 
@@ -559,9 +724,24 @@ int main(string[] args)
         runDeferredSemantic();
         foreach (m; roots) m.semantic2(null);
         runDeferredSemantic2();
+        StubStats stubs;
+        if (!full)
+        {
+            auto names = collectClassNames();
+            foreach (m; roots) stubBodies(m.members, stubs, names);
+        }
+        stderr.writefln("prefilter: %d bodies kept, %d stubbed", stubs.kept, stubs.stubbed);
         foreach (m; roots) m.semantic3(null);
         runDeferredSemantic3();
         const tSema = sw.peek;
+        {
+            import core.memory : GC;
+            auto a = GC.stats;
+            GC.collect();
+            auto b = GC.stats;
+            stderr.writefln("gc: before collect used %d MB free %d MB; after collect used %d MB free %d MB",
+                a.usedSize >> 20, a.freeSize >> 20, b.usedSize >> 20, b.freeSize >> 20);
+        }
         size_t[4] tot;
         foreach (m; roots)
         {
@@ -583,11 +763,36 @@ int main(string[] args)
         global.params.useDIP1000 = FeatureState.enabled;
         foreach (p; imports) addImport(p);
         auto t = parseModule(file, readText(file));
-        t.module_.fullSemantic();
+        {
+            import dmd.dsymbolsem : dsymbolSemantic, importAll, runDeferredSemantic, runDeferredSemantic2, runDeferredSemantic3;
+            import dmd.semantic2 : semantic2;
+            import dmd.semantic3 : semantic3;
+            auto m = t.module_;
+            m.importedFrom = m;
+            m.importAll(null);
+            m.dsymbolSemantic(null);
+            runDeferredSemantic();
+            m.semantic2(null);
+            runDeferredSemantic2();
+            StubStats stubs;
+            if (!full)
+            {
+                auto names = collectClassNames();
+                stubBodies(m.members, stubs, names);
+            }
+            writefln("prefilter: %d kept %d stubbed", stubs.kept, stubs.stubbed);
+            m.semantic3(null);
+            runDeferredSemantic3();
+        }
         auto an = new Analyzer;
         an.walk(t.module_.members);
         foreach (fi; an.findings) all ~= fi;
         writefln("stats: %d %d %d %d", an.nFuncs, an.nLocals, an.nDerefs, an.nChecks);
+        {
+            RU ru;
+            () @trusted { getrusage(0, &ru); }(); // spike: plain C call into a stack struct
+            writefln("rss: %d %s", ru.maxrss >> 20, file);
+        }
         deinitializeDMD();
     }
     foreach (fi; all) writefln("%s: Error: %s", fi.loc, fi.msg);
