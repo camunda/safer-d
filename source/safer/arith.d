@@ -4,7 +4,7 @@
 /// unsigned (`size_t`), and D, like Rust in release builds, wraps on
 /// underflow: `window - reserved` with `reserved > window` is a number near
 /// 2^64, which then reads as an enormous budget. Size arithmetic goes
-/// through these helpers: safe-d-check bans the hand-written guard they
+/// through these helpers: safer-d-check bans the hand-written guard they
 /// replace (SD010: `a > b ? a - b : 0`, which is easy to get subtly wrong:
 /// swapped operands, `>=` against `>`, a third term) and caps the raw
 /// subtractions left in the modules a project lists (SD011).
@@ -15,7 +15,7 @@
 ///   overflow would be a bug. They halt with `assert(0)`, which, unlike a
 ///   plain `assert`, stays in release builds, so a broken invariant crashes
 ///   at the cause instead of wrapping into a wrong size downstream.
-module safed.arith;
+module safer.arith;
 @safe:
 
 import std.traits : isIntegral, isSigned;

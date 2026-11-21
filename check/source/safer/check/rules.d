@@ -1,7 +1,7 @@
-/// The Safe D rules. Each has an id (`SD001`...), and those that cap a count
+/// The Safer D rules. Each has an id (`SD001`...), and those that cap a count
 /// rather than ban a pattern have a budget name, whose value lives in the
-/// project's `safe-d.json`. SAFE-D.md gives the reasoning for each.
-module safed.check.rules;
+/// project's `safer-d.json`. SAFER-D.md gives the reasoning for each.
+module safer.check.rules;
 
 @safe:
 
@@ -23,8 +23,8 @@ Regex!char re(string pattern)()
 }
 import std.algorithm : canFind, endsWith, startsWith;
 import std.string : strip, stripRight;
-import safed.check.config : Config, Kind, ProjectRule, Severity;
-import safed.check.lexer : Line, lex, isBlank;
+import safer.check.config : Config, Kind, ProjectRule, Severity;
+import safer.check.lexer : Line, lex, isBlank;
 
 /// A rule, for `--rules` and the docs.
 struct Rule
@@ -43,22 +43,22 @@ static immutable Rule[] allRules = [
     Rule("SD004", "trusted", "`@trusted` outside the io modules is capped"),
     Rule("SD005", "trusted-io", "`@trusted` inside the io modules is capped"),
     Rule("SD006", null, "a comment above every `@trusted` and `assumeIsolated` says why it is safe"),
-    Rule("SD007", null, "no raw threads (`new Thread`, `isDaemon`, `std.concurrency`) outside the io modules; use safed.concurrency.spawn"),
+    Rule("SD007", null, "no raw threads (`new Thread`, `isDaemon`, `std.concurrency`) outside the io modules; use safer.concurrency.spawn"),
     Rule("SD008", null, "no `__gshared` or `union` outside the io modules"),
     Rule("SD009", "isolation", "`assumeIsolated` calls outside the io modules are capped"),
-    Rule("SD010", null, "no hand-written `a > b ? a - b : 0`; use safed.arith.saturatingSub"),
+    Rule("SD010", null, "no hand-written `a > b ? a - b : 0`; use safer.arith.saturatingSub"),
     Rule("SD011", "subtraction", "raw subtractions in the `subtractionScope` modules are capped"),
     Rule("SD012", null, "a `catch (Exception)` that swallows says why; never catch `Throwable` or `Error`"),
     Rule("SD013", "catch", "`catch (Exception)` outside test files is capped"),
     Rule("SD014", null, "a `switch` over an enum is a `final switch` (no `default:`)"),
-    Rule("SD015", "class-null", "null checks on class references are capped; use safed.option.Option"),
-    Rule("SD016", "nullable", "`Nullable!` uses are capped; use safed.option.Option"),
+    Rule("SD015", "class-null", "null checks on class references are capped; use safer.option.Option"),
+    Rule("SD016", "nullable", "`Nullable!` uses are capped; use safer.option.Option"),
     Rule("SD017", "class", "class declarations (exceptions aside) are capped; prefer a struct, enum or SumType"),
     Rule("SD018", null, "the null-audit module imports every module"),
     Rule("SD019", "nullable-mark", "`@nullable(\"why\")` marks are capped"),
     Rule("SD020", "cast", "`cast(` outside the io modules is capped"),
-    Rule("SD021", null, "dub.json keeps the Safe D compiler settings"),
-    Rule("SD022", "null-local", "class-typed locals that start or become null are capped; initialise them, or use safed.option.Option"),
+    Rule("SD021", null, "dub.json keeps the Safer D compiler settings"),
+    Rule("SD022", "null-local", "class-typed locals that start or become null are capped; initialise them, or use safer.option.Option"),
     Rule("SD023", "pure-throw", "pure-core modules (`pure:`) return errors as values: `throw`s are capped and exception classes are private"),
     Rule("SD024", null, "no module-level `version (unittest)` imports outside test-only modules"),
 ];
@@ -148,7 +148,7 @@ Result runRules(const ref Config cfg, const Source[] files, const string[string]
         (f) => !cfg.isTest(f.path), (code) => matchFirst(code, re!`catch\s*\(\s*Exception\b`) ? 1 : 0);
     if (on("SD014")) sd014(cfg, files, r);
     sd015(cfg, files, r);
-    countLines(cfg, files, r, "SD016", "`Nullable!` uses outside test files (use safed.option.Option)",
+    countLines(cfg, files, r, "SD016", "`Nullable!` uses outside test files (use safer.option.Option)",
         (f) => !cfg.isTest(f.path), (code) => countMatches(code, re!`Nullable!`));
     countLines(cfg, files, r, "SD017", "class declarations outside test files (exceptions aside)",
         (f) => !cfg.isTest(f.path), (code) => isClassDecl(code) ? 1 : 0);
@@ -299,7 +299,7 @@ private void sd007_008(const ref Config cfg, const Source[] files, ref Result r)
             immutable text = l.escapeText;
             if (cfg.severity("SD007") != Severity.off && !cfg.allowed("SD007", f.path) && matchFirst(text, threads))
                 r.findings ~= Finding("SD007", f.path, l.number,
-                    "start threads with safed.concurrency.spawn/spawnDaemon (sendable arguments only)");
+                    "start threads with safer.concurrency.spawn/spawnDaemon (sendable arguments only)");
             if (cfg.severity("SD008") != Severity.off && !cfg.allowed("SD008", f.path) && matchFirst(text, global))
                 r.findings ~= Finding("SD008", f.path, l.number,
                     "`__gshared` and unions are only allowed in the io modules; use `shared` with Locked/atomics, or std.sumtype");
@@ -321,7 +321,7 @@ private void sd010(const ref Config cfg, const Source[] files, ref Result r)
             foreach (m; matchAll(l.code, guard))
                 if (m[1] == m[3] && m[2] == m[4])
                     r.findings ~= Finding("SD010", f.path, l.number,
-                        "use safed.arith.saturatingSub(a, b) instead of `a > b ? a - b : 0`");
+                        "use safer.arith.saturatingSub(a, b) instead of `a > b ? a - b : 0`");
     }
 }
 
@@ -339,7 +339,7 @@ private void sd011(const ref Config cfg, const Source[] files, ref Result r)
     Count c = Count("SD011", "subtraction", "raw subtractions in the subtractionScope modules");
     foreach (ref f; files)
     {
-        import safed.check.config : underAny;
+        import safer.check.config : underAny;
         if (!underAny(f.path, cfg.subtractionScope) || cfg.allowed("SD011", f.path)) continue;
         foreach (ref l; f.lines)
             if (immutable n = rawSubtractions(l.code))
@@ -522,7 +522,7 @@ private void sd015(const ref Config cfg, const Source[] files, ref Result r)
         return (file ~ "\0" ~ reference in local) !is null;
     }
 
-    Count c = Count("SD015", "class-null", "null checks on class references (use safed.option.Option)");
+    Count c = Count("SD015", "class-null", "null checks on class references (use safer.option.Option)");
     auto isNull = re!`([A-Za-z_][\w.]*)[ \t]*!?is[ \t]+null`;
     auto ifRef = re!`if[ \t]*\([ \t]*(!|auto[ \t]+[A-Za-z_]\w*[ \t]*=)?[ \t]*([A-Za-z_][\w.]*)[ \t]*\)`;
     foreach (ref f; files)
@@ -561,13 +561,13 @@ private void sd018(const ref Config cfg, const Source[] files, ref Result r)
 {
     foreach (na; cfg.nullAudit)
     {
-        import safed.check.config : underAny;
+        import safer.check.config : underAny;
         const(Source)* audit;
         foreach (ref f; files)
             if (f.path == na.module_) audit = &f;
         if (audit is null)
         {
-            r.findings ~= Finding("SD018", na.module_, 1, "the null-audit module named in safe-d.json doesn't exist");
+            r.findings ~= Finding("SD018", na.module_, 1, "the null-audit module named in safer-d.json doesn't exist");
             return;
         }
         bool[string] imported;
@@ -597,7 +597,7 @@ private void sd021(const ref Config cfg, const string[string] dubJsons, ref Resu
     import std.json : JSONValue, JSONType, parseJSON, JSONException;
     import std.algorithm : sort;
     import std.array : array;
-    import safed.json : jsonGet;
+    import safer.json : jsonGet;
 
     string[] flagsOf(const ref JSONValue pkg, string key)
     {
@@ -643,8 +643,8 @@ private void sd021(const ref Config cfg, const string[string] dubJsons, ref Resu
         {
             bool hooked;
             foreach (c; flagsOf(pkg, "preBuildCommands"))
-                if (c.canFind("SAFE_D_PACKAGE_DIR") || c.canFind("safe-d") || c.canFind("check-safe")) hooked = true;
-            if (!hooked) bad("`preBuildCommands` must run safe-d-check, so every build is checked");
+                if (c.canFind("SAFER_D_PACKAGE_DIR") || c.canFind("safer-d") || c.canFind("SAFE_D_PACKAGE_DIR") || c.canFind("safe-d") || c.canFind("check-safe")) hooked = true;
+            if (!hooked) bad("`preBuildCommands` must run safer-d-check, so every build is checked");
         }
     }
 
@@ -767,7 +767,7 @@ private void sd022(const ref Config cfg, const Source[] files, ref Result r)
 {
     if (cfg.severity("SD022") == Severity.off) return;
     auto classes = classNames(files);
-    Count c = Count("SD022", "null-local", "class-typed locals that start or become null (initialise them, or use safed.option.Option)");
+    Count c = Count("SD022", "null-local", "class-typed locals that start or become null (initialise them, or use safer.option.Option)");
     auto noInit = re!`(^|[^\w.!])([A-Z]\w*)[ \t]+([a-z_]\w*)[ \t]*;`;
     auto typedInit = re!`(^|[^\w.!])([A-Z]\w*)[ \t]+([a-z_]\w*)[ \t]*=[ \t]*([^=;][^;]*)`;
     auto autoInit = re!`(^|[^\w.])(auto|const|immutable)[ \t]+([a-z_]\w*)[ \t]*=[ \t]*([^=;][^;]*)`;
@@ -852,7 +852,7 @@ bool isPureCore(const ref Source f)
     return false;
 }
 
-/// SD023: in a pure-core module a failure is a `Result` (safed.result), not
+/// SD023: in a pure-core module a failure is a `Result` (safer.result), not
 /// an exception. What may throw is a parser unwinding to its own entry
 /// point, which turns it into the error value, so its exception class is
 /// private and the `throw`s are counted against `pure-throw`.
@@ -874,7 +874,7 @@ private void sd023(const ref Config cfg, const Source[] files, ref Result r)
             }
             if (matchFirst(l.code, exClass))
                 r.findings ~= Finding("SD023", f.path, l.number,
-                    "an exception class in a pure-core module must be private; return a Result (safed.result) instead of throwing");
+                    "an exception class in a pure-core module must be private; return a Result (safer.result) instead of throwing");
         }
     }
     r.counts ~= c;
@@ -940,7 +940,7 @@ private void sd024(const ref Config cfg, const Source[] files, ref Result r)
     }
 }
 
-// ---- Project rules (`projectRules` in safe-d.json) ---------------------------
+// ---- Project rules (`projectRules` in safer-d.json) ---------------------------
 
 private void projectRule(const ref Config cfg, const ref ProjectRule p, const Source[] files, ref Result r)
 {
@@ -986,7 +986,7 @@ private void listed(const ref Config cfg, const ref ProjectRule p, const Source[
         if (f.path == p.listIn) list = &f;
     if (list is null)
     {
-        r.findings ~= Finding(p.id, p.listIn, 1, "the `listIn` module named in safe-d.json doesn't exist");
+        r.findings ~= Finding(p.id, p.listIn, 1, "the `listIn` module named in safer-d.json doesn't exist");
         return;
     }
     bool[string] imported, staticImports;

@@ -1,21 +1,21 @@
-/// `safe-d-check init`: a new project that passes every rule from its first
+/// `safer-d-check init`: a new project that passes every rule from its first
 /// commit (all budgets 0). The templates are compiled in (`templates/`), so
 /// init needs no network.
-module safed.check.scaffold;
+module safer.check.scaffold;
 
 @safe:
 
 import std.array : replace;
 import std.file : exists, isDir, mkdirRecurse, write;
 import std.path : baseName, buildPath, absolutePath, buildNormalizedPath, dirName;
-import safed.io : stdErr, listDir;
-import safed.check.version_ : toolVersion;
+import safer.io : stdErr, listDir;
+import safer.check.version_ : toolVersion;
 
 private struct Template { string path; string text; }
 
 private static immutable Template[] templates = [
     Template("dub.json", import("dub.json")),
-    Template("safe-d.json", import("safe-d.json")),
+    Template("safer-d.json", import("safer-d.json")),
     Template("dscanner.ini", import("dscanner.ini")),
     Template("Makefile", import("Makefile")),
     Template(".gitignore", import("gitignore")),
@@ -60,7 +60,7 @@ int scaffold(string dir, string name)
 {
     if (exists(dir) && (!isDir(dir) || listDir(dir, imported!"std.file".SpanMode.shallow).length))
     {
-        stdErr.writeln("safe-d-check init: " ~ dir ~ " exists and isn't empty");
+        stdErr.writeln("safer-d-check init: " ~ dir ~ " exists and isn't empty");
         return 2;
     }
     auto pkg = packageName(name.length ? name : baseName(buildNormalizedPath(absolutePath(dir))));
@@ -70,7 +70,7 @@ int scaffold(string dir, string name)
         mkdirRecurse(dirName(path));
         write(path, fill(t.text, pkg, toolVersion));
     }
-    stdErr.writeln("safe-d-check init: created " ~ pkg ~ " in " ~ dir ~ "\n"
+    stdErr.writeln("safer-d-check init: created " ~ pkg ~ " in " ~ dir ~ "\n"
         ~ "  cd " ~ dir ~ " && dub test && dub run");
     return 0;
 }

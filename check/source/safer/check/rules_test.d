@@ -1,13 +1,13 @@
 /// One test per rule: a snippet that must trip it and a near miss that
 /// must not (often the same text in a comment or a string, which the old
 /// grep-based scripts couldn't tell apart).
-module safed.check.rules_test;
+module safer.check.rules_test;
 
 @safe:
 
-import safed.check.config : Config, Severity, parseConfig;
+import safer.check.config : Config, Severity, parseConfig;
 import std.algorithm : canFind;
-import safed.check.rules;
+import safer.check.rules;
 
 private Result check(string cfgJson, string[2][] files, string[string] dub = null)
 {
@@ -223,7 +223,7 @@ unittest // SD021
     enum good = `{"name":"p","toolchainRequirements":{"dmd":"no","gdc":"no","ldc":">=1.43.0"},
         "dflags":["-preview=dip1000","-preview=nosharedaccess"],"dflags-ldc":["-fno-delete-null-pointer-checks"],
         "buildTypes":{"release":{"dflags-ldc":["-boundscheck=on"]}},
-        "preBuildCommands":["dub run -q --root \"$SAFE_D_PACKAGE_DIR\" :check -- --root \"$PACKAGE_DIR\""],
+        "preBuildCommands":["dub run -q --root \"$SAFER_D_PACKAGE_DIR\" :check -- --root \"$PACKAGE_DIR\""],
         "subPackages":[{"name":"none","targetType":"none"}]}`;
     assert(ids(check(`{}`, [["a.d", ok]], ["dub.json": good]), "SD021") == []);
     enum bad = `{"name":"p","toolchainRequirements":{"ldc":">=1.40.0"},"dflags":["-preview=dip1000"],

@@ -1,12 +1,12 @@
-/// safe-d-check: checks a D project against the Safe D rules.
+/// safer-d-check: checks a D project against the Safer D rules.
 ///
 /// ---
-/// safe-d-check [check] [--root DIR] [--format text|github] [--ratchet]
-/// safe-d-check adopt   [--root DIR]
-/// safe-d-check init    DIR [--name NAME]
-/// safe-d-check rules
+/// safer-d-check [check] [--root DIR] [--format text|github] [--ratchet]
+/// safer-d-check adopt   [--root DIR]
+/// safer-d-check init    DIR [--name NAME]
+/// safer-d-check rules
 /// ---
-module safed.check.app;
+module safer.check.app;
 
 @safe:
 
@@ -16,29 +16,29 @@ import std.conv : to;
 import std.file : exists, isDir, isFile, readText, write;
 import std.format : format;
 import std.path : buildPath, baseName, extension, relativePath, absolutePath, buildNormalizedPath;
-import safed.io : stdOut, stdErr, listDir;
-import safed.option : Option, some, none;
-import safed.check.config;
-import safed.check.rules;
-import safed.check.scaffold : scaffold;
-import safed.check.version_ : toolVersion;
+import safer.io : stdOut, stdErr, listDir;
+import safer.option : Option, some, none;
+import safer.check.config;
+import safer.check.rules;
+import safer.check.scaffold : scaffold;
+import safer.check.version_ : toolVersion;
 
-private enum usage = `safe-d-check ` ~ toolVersion ~ `: check a D project against the Safe D rules
+private enum usage = `safer-d-check ` ~ toolVersion ~ `: check a D project against the Safer D rules
 
 Usage:
-  safe-d-check [check] [--root DIR] [--format text|github] [--ratchet]
+  safer-d-check [check] [--root DIR] [--format text|github] [--ratchet]
       Check the project at DIR (default: .). Exit 1 on a violation or a
       budget overrun. --ratchet lowers budgets the code now comes in under
       and raises project-rule floors it now comes in over.
-  safe-d-check adopt [--root DIR]
-      Measure the project and write safe-d.json with budgets at today's
+  safer-d-check adopt [--root DIR]
+      Measure the project and write safer-d.json with budgets at today's
       counts (and project-rule floors), so the rules hold from here on
       without a big-bang cleanup.
-  safe-d-check init DIR [--name NAME]
-      Create a new Safe D project in DIR.
-  safe-d-check rules
+  safer-d-check init DIR [--name NAME]
+      Create a new Safer D project in DIR.
+  safer-d-check rules
       List the rules.
-  safe-d-check --version
+  safer-d-check --version
 `;
 
 /// Output style.
@@ -141,12 +141,42 @@ string[string] dubFiles(string root, const ref Config cfg)
     return r;
 }
 
-/// `safe-d.json` under `root`, or the defaults when there is none.
-Config loadConfig(string root, out bool found)
+/// The config file name.
+enum configName = "safer-d.json";
+/// The pre-2.0 name, still read (with a warning) until 3.0.
+enum legacyConfigName = "safe-d.json";
+
+/// Which config file to read, given which exist: the current name wins,
+/// the legacy name is the fallback, and "" means neither (use defaults).
+string pickConfig(bool currentExists, bool legacyExists) pure nothrow @nogc
 {
-    auto p = buildPath(root, "safe-d.json");
-    found = exists(p);
-    return found ? parseConfig(readText(p)) : Config.init;
+    return currentExists ? configName : legacyExists ? legacyConfigName : "";
+}
+
+unittest
+{
+    assert(pickConfig(true, true) == configName);
+    assert(pickConfig(true, false) == configName);
+    assert(pickConfig(false, true) == legacyConfigName);
+    assert(pickConfig(false, false) == "");
+}
+
+/// The config under `root`, or the defaults when there is none. `name` is
+/// the file that was read (`configName` when none was), so `--ratchet`
+/// writes back to the same file.
+Config loadConfig(string root, out bool found, out string name)
+{
+    name = pickConfig(exists(buildPath(root, configName)), exists(buildPath(root, legacyConfigName)));
+    found = name.length > 0;
+    if (!found)
+    {
+        name = configName;
+        return Config.init;
+    }
+    if (name == legacyConfigName)
+        stdErr.writeln("safer-d-check: warning: reading " ~ legacyConfigName ~ "; rename it to "
+            ~ configName ~ " (the old name stops being read in 3.0).");
+    return parseConfig(readText(buildPath(root, name)));
 }
 
 private void emit(Format fmt, string level, string rule, string file, size_t line, string msg)
@@ -161,14 +191,15 @@ private void emit(Format fmt, string level, string rule, string file, size_t lin
 int runCheck(const ref Args a)
 {
     bool found;
-    auto cfg = loadConfig(a.root, found);
+    string cfgName;
+    auto cfg = loadConfig(a.root, found, cfgName);
     if (!found)
-        stdErr.writeln("safe-d-check: no safe-d.json in " ~ a.root ~ "; using the defaults (every budget 0). "
-            ~ "`safe-d-check adopt` writes one.");
+        stdErr.writeln("safer-d-check: no safer-d.json in " ~ a.root ~ "; using the defaults (every budget 0). "
+            ~ "`safer-d-check adopt` writes one.");
     auto files = collect(a.root, cfg);
     if (!files.length)
     {
-        stdErr.writeln("safe-d-check: no .d files under " ~ format("%-(%s, %)", cfg.sources));
+        stdErr.writeln("safer-d-check: no .d files under " ~ format("%-(%s, %)", cfg.sources));
         return 2;
     }
     auto res = runRules(cfg, files, dubFiles(a.root, cfg));
@@ -189,7 +220,7 @@ int runCheck(const ref Args a)
             immutable sev = cfg.severity(c.rule);
             immutable level = sev == Severity.error ? "Error" : "Warning";
             if (sev == Severity.error) failed = true;
-            emit(a.format, level, c.rule, "safe-d.json", 1, format(
+            emit(a.format, level, c.rule, cfgName, 1, format(
                 "%s %s, budget is %s (budgets.%s); make the code safe, or justify the escape and raise the budget",
                 c.count, c.what, budget, c.budget));
             foreach (w; c.where) stdErr.writeln("  counted: " ~ w);
@@ -200,10 +231,10 @@ int runCheck(const ref Args a)
             {
                 cfg.budgets[c.budget] = c.count;
                 lowered = true;
-                stdErr.writefln("safe-d-check: lowered budgets.%s from %s to %s", c.budget, budget, c.count);
+                stdErr.writefln("safer-d-check: lowered budgets.%s from %s to %s", c.budget, budget, c.count);
             }
             else
-                stdErr.writefln("safe-d-check: %s %s, below the budget of %s; lower budgets.%s to %s (or run with --ratchet)",
+                stdErr.writefln("safer-d-check: %s %s, below the budget of %s; lower budgets.%s to %s (or run with --ratchet)",
                     c.count, c.what, budget, c.budget, c.count);
         }
     }
@@ -214,7 +245,7 @@ int runCheck(const ref Args a)
             immutable sev = cfg.severity(fl.rule);
             immutable level = sev == Severity.error ? "Error" : "Warning";
             if (sev == Severity.error) failed = true;
-            emit(a.format, level, fl.rule, "safe-d.json", 1, format(
+            emit(a.format, level, fl.rule, cfgName, 1, format(
                 "%s matches, below the floor of %s (projectRules %s): %s; or justify the drop and lower the floor",
                 fl.count, fl.floor, fl.rule, fl.what));
         }
@@ -224,16 +255,16 @@ int runCheck(const ref Args a)
             {
                 setFloor(cfg, fl.rule, fl.count);
                 lowered = true;
-                stdErr.writefln("safe-d-check: raised the %s floor from %s to %s", fl.rule, fl.floor, fl.count);
+                stdErr.writefln("safer-d-check: raised the %s floor from %s to %s", fl.rule, fl.floor, fl.count);
             }
             else
-                stdErr.writefln("safe-d-check: %s matches for %s, above the floor of %s; raise it to %s (or run with --ratchet)",
+                stdErr.writefln("safer-d-check: %s matches for %s, above the floor of %s; raise it to %s (or run with --ratchet)",
                     fl.count, fl.rule, fl.floor, fl.count);
         }
     }
-    if (lowered) write(buildPath(a.root, "safe-d.json"), renderConfig(cfg));
+    if (lowered) write(buildPath(a.root, cfgName), renderConfig(cfg));
     if (!failed)
-        stdErr.writefln("safe-d-check: %s files clean (%s rules)", files.length, allRules.length);
+        stdErr.writefln("safer-d-check: %s files clean (%s rules)", files.length, allRules.length);
     return failed ? 1 : 0;
 }
 
@@ -244,11 +275,12 @@ private void setFloor(ref Config cfg, string id, long floor)
         if (p.id == id) p.floor = floor;
 }
 
-/// Run `adopt`: write safe-d.json with budgets at today's counts.
+/// Run `adopt`: write safer-d.json with budgets at today's counts.
 int runAdopt(const ref Args a)
 {
     bool found;
-    auto cfg = loadConfig(a.root, found);
+    string cfgName;
+    auto cfg = loadConfig(a.root, found, cfgName);
     if (!found)
     {
         // First adoption: find the usual io and null-audit modules.
@@ -263,8 +295,10 @@ int runAdopt(const ref Args a)
     auto res = runRules(cfg, files, dubFiles(a.root, cfg));
     foreach (c; res.counts) cfg.budgets[c.budget] = c.count;
     foreach (fl; res.floors) setFloor(cfg, fl.rule, fl.count);
-    write(buildPath(a.root, "safe-d.json"), renderConfig(cfg));
-    stdErr.writefln("safe-d-check: wrote %s with budgets at today's counts:", buildPath(a.root, "safe-d.json"));
+    write(buildPath(a.root, configName), renderConfig(cfg));
+    stdErr.writefln("safer-d-check: wrote %s with budgets at today's counts:", buildPath(a.root, configName));
+    if (cfgName == legacyConfigName)
+        stdErr.writeln("safer-d-check: delete " ~ legacyConfigName ~ "; " ~ configName ~ " replaces it.");
     foreach (c; res.counts) stdErr.writefln("  %-14s %5s  %s", c.budget, c.count, c.rule);
     foreach (fl; res.floors) stdErr.writefln("  %-14s %5s  %s", "floor", fl.count, fl.rule);
     if (res.findings.length)
@@ -283,7 +317,7 @@ int run(const string[] argv)
     try a = parseArgs(argv);
     catch (UsageException e)
     {
-        stdErr.writeln("safe-d-check: " ~ e.msg ~ "\n\n" ~ usage);
+        stdErr.writeln("safer-d-check: " ~ e.msg ~ "\n\n" ~ usage);
         return 2;
     }
     try
@@ -303,12 +337,12 @@ int run(const string[] argv)
     }
     catch (ConfigException e)
     {
-        stdErr.writeln("safe-d-check: safe-d.json: " ~ e.msg);
+        stdErr.writeln("safer-d-check: safer-d.json: " ~ e.msg);
         return 2;
     }
     catch (Exception e)
     {
-        stdErr.writeln("safe-d-check: " ~ e.msg);
+        stdErr.writeln("safer-d-check: " ~ e.msg);
         return 2;
     }
 }

@@ -1,10 +1,10 @@
 {
   "name": "{{name}}",
-  "description": "{{name}}: a Safe D project",
+  "description": "{{name}}: a Safer D project",
   "license": "Apache-2.0",
   "targetType": "executable",
   "dependencies": {
-    "safe-d": "{{version}}"
+    "safer-d": "{{version}}"
   },
   "toolchainRequirements": {
     "dmd": "no",
@@ -26,6 +26,6 @@
     }
   },
   "preBuildCommands": [
-    "dub run -q --root \"$SAFE_D_PACKAGE_DIR\" :check -- --root \"$PACKAGE_DIR\""
+    "dub run -q --root \"$SAFER_D_PACKAGE_DIR\" :check -- --root \"$PACKAGE_DIR\""
   ]
 }

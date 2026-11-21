@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Point the floating major tag (v0, v1, ...) at the release just cut, so
-# `uses: camunda/safe-d/.github/workflows/safe-d.yml@v0` follows releases
+# `uses: camunda/safer-d/.github/workflows/safer-d.yml@v0` follows releases
 # within a major. Invoked by @semantic-release/exec successCmd.
 set -euo pipefail
 

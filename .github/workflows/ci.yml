@@ -27,9 +27,9 @@ jobs:
         shell: bash
       - run: dub test -q :check
         shell: bash
-      - name: safe-d checks itself
+      - name: safer-d checks itself
         shell: bash
-        run: dub build -q :check && ./safe-d-check --root .
+        run: dub build -q :check && ./safer-d-check --root .
       - name: init scaffolds a project that builds, tests and gates
         shell: bash
         run: scripts/e2e.sh

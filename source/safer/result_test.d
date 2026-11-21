@@ -1,11 +1,11 @@
-/// Tests of `safed.result` from outside the module, where `private` applies:
+/// Tests of `safer.result` from outside the module, where `private` applies:
 /// the value and error are reachable only through the accessors.
-module safed.result_test;
+module safer.result_test;
 
 @safe:
 
-import safed.result;
-import safed.option : None;
+import safer.result;
+import safer.option : None;
 
 private alias IntResult = Result!(int, string);
 

@@ -3,8 +3,8 @@
 /// reason it is memory safe beside it, so code using them stays `@safe:`.
 ///
 /// Project-specific escapes (POSIX fds, terminals, signals) belong in the
-/// project's own io module, which its safe-d.json lists under `ioModules`.
-module safed.io;
+/// project's own io module, which its safer-d.json lists under `ioModules`.
+module safer.io;
 
 @safe:
 
@@ -106,7 +106,7 @@ DirEntry[] listDir(string dir, SpanMode mode, bool followSymlink = false) @trust
 {
     import std.file : write, remove, tempDir;
     import std.path : buildPath;
-    auto p = buildPath(tempDir, "safe-d-io-test");
+    auto p = buildPath(tempDir, "safer-d-io-test");
     write(p, "hi");
     scope (exit) remove(p);
     assert(readBytes(p) == cast(const(ubyte)[]) "hi");

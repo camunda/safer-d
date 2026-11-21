@@ -6,7 +6,7 @@
 ///
 /// - It is `@mustuse`: calling a function that returns one and ignoring the
 ///   value is a compile error. Discarding it on purpose takes
-///   `cast(void) f();`, which safe-d-check counts (SD020).
+///   `cast(void) f();`, which safer-d-check counts (SD020).
 /// - Its fields are private, so the only ways to the value are the ones
 ///   that handle the error too:
 ///   - `r.match!(v => ..., e => ...)`: both cases, or it doesn't compile;
@@ -30,11 +30,11 @@
 ///
 /// `attempt!f(args)` runs a function that throws and returns its outcome as
 /// a `Result!(R, Exception)`, to bridge Phobos and other throwing code.
-module safed.result;
+module safer.result;
 @safe:
 
 import core.attribute : mustuse;
-import safed.option : None, none, Option, some;
+import safer.option : None, none, Option, some;
 
 /// Success (`T`) or failure (`E`). Construct with `Result!(T, E).ok(x)` or
 /// `.err(e)`, or inside a function returning one, `typeof(return).ok(x)`.

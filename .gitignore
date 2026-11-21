@@ -1,9 +1,15 @@
 .dub/
-/safe-d-check
-/safe-d-test-*
+/safer-d-check
+/safer-d-test-*
 /libsafe-d.a
 *.o
 *.obj
 node_modules/
 package-lock.json
-/safe-d-check-test-*
+/safer-d-check-test-*
+# pre-2.0 build outputs
+/safe-d-check
+/safe-d-check-test-application
+/safe-d-test-library
+/libsafe-d.a
+/libsafer-d.a

@@ -26,9 +26,9 @@
 /// holds a reference is @system, and optional references get reassigned.
 /// The forcing comes from the private field, not the representation.)
 ///
-/// safe-d-check caps `Nullable!` uses (SD016) and null checks on class
+/// safer-d-check caps `Nullable!` uses (SD016) and null checks on class
 /// references (SD015), so new optional values use this.
-module safed.option;
+module safer.option;
 @safe:
 
 /// The absent case.
@@ -95,7 +95,7 @@ struct Option(T)
 
 /// Marks a class-typed field or global that may be null on purpose, with
 /// the reason: `@nullable("set once startup finishes") Agent agent;`.
-/// safed.nullaudit reports bare class references without it, and safe-d-check
+/// safer.nullaudit reports bare class references without it, and safer-d-check
 /// counts the marks (SD019, budget `nullable-mark`).
 struct nullable { string why; }
 

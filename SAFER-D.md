@@ -1,16 +1,21 @@
-# Safe D
+# Safer D
 
-Safe D is D with the escape hatches counted: what TypeScript's strict mode
+Safer D = [SafeD](https://dlang.org/articles/safed.html) (D's memory-safe
+subset: `@safe` everywhere, which SD001–SD003 enforce) plus rules for null,
+errors, casts and concurrency. SafeD is the language's term; Safer D is
+Camunda's house profile built on it, not a replacement for it.
+
+Safer D is D with the escape hatches counted: what TypeScript's strict mode
 and a ban on `any` and casts are to JavaScript. The compiler does most of the
-work (`@safe`, DIP1000 scope checking, `nosharedaccess`); `safe-d-check`
+work (`@safe`, DIP1000 scope checking, `nosharedaccess`); `safer-d-check`
 enforces the rest, the parts the compiler allows but a reviewer shouldn't
 have to catch.
 
 Two kinds of rule:
 
 - **Bans** fail on any occurrence. They cover things with a safe replacement
-  in `safe-d` itself.
-- **Budgets** cap a count per repo (`safe-d.json` `budgets`, missing = 0).
+  in `safer-d` itself.
+- **Budgets** cap a count per repo (`safer-d.json` `budgets`, missing = 0).
   They cover escapes that are sometimes right. A budget can only go down
   without review: the checker tells you when the code comes in under it, and
   `--ratchet` lowers it. Raising one is a visible diff in a PR.
@@ -22,27 +27,27 @@ error, so editors and CI pick it up.
 
 Rust is the reference for "safe and strict": the borrow checker, no null,
 exhaustive `match`, `Result` instead of exceptions, `unsafe` blocks that
-stand out. Safe D aims for most of that guarantee at a fraction of the build
+stand out. Safer D aims for most of that guarantee at a fraction of the build
 cost. The trade is deliberate, so here it is in full.
 
 ### Safety and correctness
 
-| Concern | Rust | Safe D |
+| Concern | Rust | Safer D |
 | --- | --- | --- |
 | Memory safety | Borrow checker; compile error. | `@safe` + DIP1000 `scope`, with the GC owning heap memory; compile error. Equivalent for use-after-free and out-of-bounds. Both keep bounds checks in release builds. |
 | Escape hatches | `unsafe { }`: visible, but not counted (`cargo-geiger` is opt-in). | `@trusted`, `cast`, `assumeIsolated`: each needs a reason (SD006) and counts against a per-repo budget (SD004, SD005, SD009, SD020). **Stricter than stock Rust.** |
-| Data races | `Send`/`Sync`; compile error. | `shared` + `nosharedaccess` makes touching shared data directly a compile error. Unshared data crosses threads safely only through `safed.concurrency.spawn` (immutable or `Isolated` arguments). The checker bans raw threads (SD007, SD008); the type system doesn't. **Weaker than Rust**: a lint, not a proof. |
+| Data races | `Send`/`Sync`; compile error. | `shared` + `nosharedaccess` makes touching shared data directly a compile error. Unshared data crosses threads safely only through `safer.concurrency.spawn` (immutable or `Isolated` arguments). The checker bans raw threads (SD007, SD008); the type system doesn't. **Weaker than Rust**: a lint, not a proof. |
 | Aliasing | One `&mut` or many `&`; compile error. | Not checked. Mutable aliasing is memory-safe under the GC, but it allows logic bugs that Rust rules out (mutating a collection while something else reads it). **Weaker than Rust.** |
 | Null | No null; `Option<T>`. | Class references can be null. `Option`/`NotNull`, the null-audit unittest (SD018) and budgets on classes, null checks and `Nullable` (SD015–SD017, SD019) shrink it to counted, reviewed places. **Weaker than Rust**: enforced by the checker and a test, not by the types. |
 | Exhaustiveness | `match` must be exhaustive. | `final switch` must be, and SD014 bans `default:` in a switch over an enum. `SumType.match` is exhaustive. **Equivalent** once SD014 holds. |
-| Errors | `Result` and `?`; panics for bugs. | `safed.result.Result!(T, E)` is `@mustuse` (ignoring one is a compile error) and its value is reachable only through accessors that handle the error. With `nothrow`, the signature says what can fail. `?` is a two-word idiom (`foreach (e; r.take(v)) return typeof(return).err(e);`), not an operator. Code that still throws is held by SD012/SD013. **Close to Rust** where `Result` + `nothrow` are used; weaker where exceptions remain. |
+| Errors | `Result` and `?`; panics for bugs. | `safer.result.Result!(T, E)` is `@mustuse` (ignoring one is a compile error) and its value is reachable only through accessors that handle the error. With `nothrow`, the signature says what can fail. `?` is a two-word idiom (`foreach (e; r.take(v)) return typeof(return).err(e);`), not an operator. Code that still throws is held by SD012/SD013. **Close to Rust** where `Result` + `nothrow` are used; weaker where exceptions remain. |
 | Unsigned underflow | Panics in debug builds; wraps in release by default. | Wraps. `saturatingSub` and `checkedSub` (which halts), plus SD010/SD011 in the modules where it matters. **About equal**: in both, release builds are safe only where the code chose checked arithmetic. |
 | Casts | `as` truncates silently; `From`/`TryFrom` are checked. | `cast(` is budgeted (SD020); `std.conv.to` is checked. **Stricter than stock Rust**, which doesn't count `as`. |
 
-In short, Safe D is:
+In short, Safer D is:
 - **Equal** on memory safety and exhaustiveness.
 - **Stricter** on counting escape hatches.
-- **Weaker** on aliasing, data races outside `safed.concurrency`, null, and
+- **Weaker** on aliasing, data races outside `safer.concurrency`, null, and
   errors in signatures where code still throws instead of returning a `Result`. There the checker and its budgets do work that
   Rust's types do.
 
@@ -89,15 +94,15 @@ Every `dub.json` package (root and subpackages) has:
 | `-preview=nosharedaccess` | `shared` data is only touched through atomics or a lock. |
 | `dflags-ldc: -fno-delete-null-pointer-checks` | A null dereference traps instead of being optimised into anything. |
 | release `dflags-ldc: -boundscheck=on` | Release builds keep bounds checks: `@safe` relies on them. |
-| root `preBuildCommands` runs safe-d-check | Every build is checked, not only CI. |
+| root `preBuildCommands` runs safer-d-check | Every build is checked, not only CI. |
 
-The hook `safe-d-check init` writes:
+The hook `safer-d-check init` writes:
 
 ```json
-"preBuildCommands": ["dub run -q --root \"$SAFE_D_PACKAGE_DIR\" :check -- --root \"$PACKAGE_DIR\""]
+"preBuildCommands": ["dub run -q --root \"$SAFER_D_PACKAGE_DIR\" :check -- --root \"$PACKAGE_DIR\""]
 ```
 
-dub sets `$SAFE_D_PACKAGE_DIR` to the safe-d the project depends on, so the
+dub sets `$SAFER_D_PACKAGE_DIR` to the safer-d the project depends on, so the
 checker is always that version: no registry lookup, no drift between the
 rules and the library that answers them.
 
@@ -145,9 +150,9 @@ the compiler stopped looking, so each needs a reason (SD006: a comment
 directly above, or above the first line of a wrapped signature) and each
 counts.
 
-The **io modules** (`safe-d.json` `ioModules`) are where a project keeps the
-wrappers around C, the OS and Phobos' `@system` corners: `safed.io`,
-`safed.concurrency` and `safed.json` in this repo, a project's own
+The **io modules** (`safer-d.json` `ioModules`) are where a project keeps the
+wrappers around C, the OS and Phobos' `@system` corners: `safer.io`,
+`safer.concurrency` and `safer.json` in this repo, a project's own
 `safeio.d` elsewhere. They get their own budget (SD005) because escapes there
 are expected and reviewed together; anywhere else (SD004) an escape is a
 smell, usually fixed by moving the wrapper into an io module.
@@ -155,10 +160,10 @@ smell, usually fixed by moving the wrapper into an io module.
 Text inside `mixin("...")` counts as code for these rules, and for SD002,
 SD003, SD007–SD009 and SD020: a string mixin can't hide an escape.
 
-### SD007–SD009: threads go through `safed.concurrency`
+### SD007–SD009: threads go through `safer.concurrency`
 
 `new Thread`, `std.concurrency` and `__gshared` let two threads see the same
-mutable data with no type telling you so. `safed.concurrency` offers
+mutable data with no type telling you so. `safer.concurrency` offers
 `spawn`/`spawnDaemon` (only `Isolated` or immutable arguments cross),
 `Locked!T`, `Shared!T` and `Chan!T` instead, all `@safe`. `union` is banned
 for the same reason as a cast: it reinterprets memory. `assumeIsolated`
@@ -168,7 +173,7 @@ a reason, like `@trusted`.
 ### SD010–SD011: unsigned subtraction
 
 `size_t` subtraction wraps silently: `0 - 1` is 18 quintillion.
-`safed.arith.saturatingSub(a, b)` stops at zero and `checkedSub` halts on underflow (as `checkedAdd`/`checkedMul` do on overflow); the
+`safer.arith.saturatingSub(a, b)` stops at zero and `checkedSub` halts on underflow (as `checkedAdd`/`checkedMul` do on overflow); the
 hand-written `a > b ? a - b : 0` (SD010) is banned because the next edit
 flips one side. SD011 counts raw `a - b` in the modules listed in
 `subtractionScope`: the ones where a wrapped length or offset is a real bug
@@ -185,12 +190,12 @@ catch budget (SD013) keeps error handling on the explicit path: return types,
 
 #### `Result` instead of exceptions
 
-`safed.result.Result!(T, E)` is Rust's `Result`. A function that can fail
+`safer.result.Result!(T, E)` is Rust's `Result`. A function that can fail
 returns one and is marked `nothrow`, so its signature lists everything that
 can go wrong:
 
 ```d
-import safed.result;
+import safer.result;
 
 Result!(Config, string) load(string path) nothrow
 {
@@ -226,7 +231,7 @@ through silently. List the skipped members as empty cases instead.
 ### SD015–SD019: no null
 
 A class reference can be null, and D won't stop you dereferencing it.
-`safed.option.Option!T` is the type for "maybe absent"; it is read with
+`safer.option.Option!T` is the type for "maybe absent"; it is read with
 `foreach (x; opt)`, so there is no unwrap to forget, and `some(null)` halts
 at the point of the mistake rather than later. `NotNull!T` carries a class
 reference that has been checked.
@@ -237,7 +242,7 @@ reference that has been checked.
 - SD017 counts classes. Prefer a struct, an enum or a `SumType`; a class is
   for reference identity or inheritance, and every class reference can be
   null. Exceptions don't count.
-- SD018 and SD019: `safed.nullaudit.auditModules!(...)` fails a unittest when
+- SD018 and SD019: `safer.nullaudit.auditModules!(...)` fails a unittest when
   any field or global is a bare class reference (not `Option`, `NotNull` or
   marked `@nullable("why")`). SD018 makes sure the audit module imports every
   module, so a new one can't skip it; SD019 counts the marks.
@@ -247,7 +252,7 @@ reference that has been checked.
   it is declared, from `new` or a call, or use `Option!C` when absence is
   real. Then the local can't be dereferenced while null. A type-aware
   analysis that proved each dereference was spiked
-  ([safe-d#3](https://github.com/camunda/safe-d/issues/3)): it caught one
+  ([safer-d#3](https://github.com/camunda/safer-d/issues/3)): it caught one
   more case (a dereference inside an `is null` branch) at 100–280 MB a
   file. Banning the pattern costs nothing. The rule reads text, so an
   `auto` local counts only when its non-null branch is visibly a class
@@ -258,7 +263,7 @@ reference that has been checked.
 
 A pure-core module is one with a `pure:` label: every free function in it
 depends only on its arguments. In such a module a failure is a value, a
-`Result` from `safed.result`, so the signature says what can go wrong. The
+`Result` from `safer.result`, so the signature says what can go wrong. The
 one throw that stays is a parser unwinding to its own entry point, which
 catches it and returns the error result. Its exception class is `private`,
 so the exception can't escape the module, and SD023 counts the `throw`s
@@ -281,7 +286,7 @@ the compiler only rejects the most dangerous ones. Use `std.conv.to` (checked: i
 conversions, and a typed function for the rest. Casts in the io modules don't count; generated code can be
 exempted with `allow`.
 
-## safe-d.json
+## safer-d.json
 
 ```json
 {
@@ -314,7 +319,7 @@ exempted with `allow`.
 | `rules` | Rule ID to `off` or `warn` (default: error; a new rule defaults to warn for one minor release). |
 | `budgets` | Budget name to the most allowed. Missing means 0. |
 | `dubFiles` | `dub.json` files SD021 checks. |
-| `requireHook` | Whether SD021 requires the build hook (off only for safe-d itself). |
+| `requireHook` | Whether SD021 requires the build hook (off only for safer-d itself). |
 | `projectRules` | The project's own checks (below). |
 
 Unknown keys are an error, so a typo can't switch a rule off.
@@ -323,7 +328,7 @@ Unknown keys are an error, so a typo can't switch a rule off.
 
 Some checks matter to one project only: "only `clock.d` reads the clock",
 "every pure-core module is listed in the purity audit". `projectRules` lets
-a project declare them in `safe-d.json` instead of a side script.
+a project declare them in `safer-d.json` instead of a side script.
 
 ```json
 "projectRules": [
@@ -357,18 +362,18 @@ a project declare them in `safe-d.json` instead of a side script.
 
 A project rule is for a local convention: a module that owns the clock, a
 call the project bans for its own reasons. When the reason is about D itself
-(memory safety, absence, error handling) and would hold in any Safe D
+(memory safety, absence, error handling) and would hold in any Safer D
 project, propose it here as an SD rule instead, as SD023 and SD024 were.
 
 ## Adopting
 
 ```bash
-dub add safe-d
-dub run safe-d:check -- adopt     # writes safe-d.json, budgets at today's counts
+dub add safer-d
+dub run safer-d:check -- adopt     # writes safer-d.json, budgets at today's counts
 ```
 
 Then add the hook and CI (see the README). From then on a count can only go
-down. `adopt` on an existing `safe-d.json` keeps your settings and rewrites
+down. `adopt` on an existing `safer-d.json` keeps your settings and rewrites
 only the budgets.
 
 ## Versioning the rules

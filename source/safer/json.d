@@ -1,5 +1,5 @@
 /// JSON and deep copies without `@system` access or `cast()` out of const.
-module safed.json;
+module safer.json;
 
 @safe:
 

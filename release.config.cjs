@@ -1,8 +1,8 @@
-// safe-d releases are git tags: code.dlang.org picks up each `vX.Y.Z`, and
+// safer-d releases are git tags: code.dlang.org picks up each `vX.Y.Z`, and
 // the floating `vX` tag moves with it for the reusable workflow. Nothing is
-// uploaded anywhere. A breaking change (to the library API, safe-d.json or
+// uploaded anywhere. A breaking change (to the library API, safer-d.json or
 // the CLI) is a major release. A new rule is not: it ships as `warn` in a
-// minor and becomes an error one minor later (see SAFE-D.md).
+// minor and becomes an error one minor later (see SAFER-D.md).
 module.exports = {
   branches: ['main'],
   plugins: [
@@ -29,7 +29,7 @@ module.exports = {
     [
       '@semantic-release/git',
       {
-        assets: ['CHANGELOG.md', 'check/source/safed/check/version_.d'],
+        assets: ['CHANGELOG.md', 'check/source/safer/check/version_.d'],
         message:
           'chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}',
       },

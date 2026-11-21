@@ -1,4 +1,4 @@
-/// `safe-d.json`: where a project's code is, which modules hold its
+/// `safer-d.json`: where a project's code is, which modules hold its
 /// reviewed escapes, and its budgets. Every key is optional; a budget that
 /// is missing is 0, so a new project starts at the strictest setting.
 ///
@@ -20,13 +20,13 @@
 ///   ]
 /// }
 /// ---
-module safed.check.config;
+module safer.check.config;
 
 @safe:
 
 import std.json : JSONOptions, JSONValue, JSONType, parseJSON;
-import safed.json : jsonGet;
-import safed.option : Option, some, none;
+import safer.json : jsonGet;
+import safer.option : Option, some, none;
 
 /// What a rule's findings do.
 enum Severity
@@ -61,7 +61,7 @@ enum Kind
     listed,
 }
 
-/// One entry of `projectRules`: a project-specific check that isn't a Safe D
+/// One entry of `projectRules`: a project-specific check that isn't a Safer D
 /// rule. Patterns match code (comments and string contents removed).
 struct ProjectRule
 {
@@ -101,7 +101,7 @@ struct ProjectRule
 /// Rules that are new and report as warnings unless configured.
 static immutable string[] warnByDefault = ["SD023", "SD024"];
 
-/// A parsed `safe-d.json`.
+/// A parsed `safer-d.json`.
 struct Config
 {
     string[] sources = ["source"];
@@ -169,7 +169,7 @@ bool underAny(string path, const string[] prefixes) pure nothrow @nogc
     return false;
 }
 
-/// Thrown for a malformed `safe-d.json`.
+/// Thrown for a malformed `safer-d.json`.
 class ConfigException : Exception
 {
     this(string msg, string file = __FILE__, size_t line = __LINE__) pure nothrow
@@ -191,7 +191,7 @@ private string[] strings(const ref JSONValue v, string key)
 }
 
 /// A path as the checker compares it: `/`-separated, no leading `./`, so a
-/// safe-d.json written on Windows (`source\\app\\io.d`) means the same.
+/// safer-d.json written on Windows (`source\\app\\io.d`) means the same.
 string normalisePath(string p) pure
 {
     import std.array : replace;
@@ -214,7 +214,7 @@ unittest
     assert(seen);
 }
 
-/// Parse `safe-d.json` text.
+/// Parse `safer-d.json` text.
 Config parseConfig(string text)
 {
     import std.conv : to;
@@ -222,13 +222,13 @@ Config parseConfig(string text)
 
     Config c;
     const root = parseJSON(text);
-    if (root.type != JSONType.object) throw new ConfigException("safe-d.json must hold an object");
+    if (root.type != JSONType.object) throw new ConfigException("safer-d.json must hold an object");
     static immutable known = ["$schema", "sources", "exclude", "ioModules", "testFiles", "subtractionScope",
         "nullAudit", "allow", "rules", "budgets", "dubFiles", "requireHook", "projectRules"];
     foreach (k, _; root.objectNoRef)
     {
         import std.algorithm : canFind;
-        if (!known.canFind(k)) throw new ConfigException("unknown key `" ~ k ~ "` in safe-d.json");
+        if (!known.canFind(k)) throw new ConfigException("unknown key `" ~ k ~ "` in safer-d.json");
     }
     if (auto v = jsonGet(root, "sources")) c.sources = strings(*v, "sources");
     if (auto v = jsonGet(root, "exclude")) c.exclude = strings(*v, "exclude");
@@ -396,7 +396,7 @@ private ProjectRule[] projectRules(const ref JSONValue v)
     return out_;
 }
 
-/// `c` as `safe-d.json` text: fixed key order, sorted maps, two-space
+/// `c` as `safer-d.json` text: fixed key order, sorted maps, two-space
 /// indent, so rewriting it (`adopt`, `--ratchet`) gives a small diff.
 string renderConfig(const ref Config c)
 {

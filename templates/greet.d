@@ -3,7 +3,7 @@ module {{module}}.greet;
 
 @safe:
 
-import safed.option : Option, some, none;
+import safer.option : Option, some, none;
 
 /// "hello, <who>".
 string greeting(string who) pure
