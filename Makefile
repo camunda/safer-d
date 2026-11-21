@@ -7,9 +7,9 @@ test:
 	dub test -q
 	dub test -q :check
 
-# safe-d holds itself to its own rules (safe-d.json at the root).
+# safer-d holds itself to its own rules (safer-d.json at the root).
 self-check: build
-	./safe-d-check --root .
+	./safer-d-check --root .
 
 # `init` makes a project that tests, runs, and fails its build on a violation.
 e2e: build

@@ -6,34 +6,34 @@
 
 ## Role
 
-**safe-d** holds the Safe D rules shared by Camunda's D repos (d8ctl, the D
+**safer-d** holds the Safer D rules shared by Camunda's D repos (d8ctl, the D
 SDK, nano-coder-d) and the tools that enforce them. The rules and their
-rationale are in `SAFE-D.md`. Treat it as the spec: change it in the same PR
+rationale are in `SAFER-D.md`. Treat it as the spec: change it in the same PR
 as the checker.
 
 ## Path map
 
 | Path | Ownership |
 | --- | --- |
-| `source/safed/` | Library: the safe replacements the rules point to. |
-| `source/safed/{io,concurrency,json}.d` | The io modules: the only place `@trusted` is expected. |
-| `check/source/safed/check/lexer.d` | Strips comments and literals and keeps string-mixin text. Rules match code, never raw lines. |
-| `check/source/safed/check/rules.d` | SD001–SD024 and `projectRules` (P000). |
-| `check/source/safed/check/rules_test.d` | One test per rule: a hit and a near miss. |
-| `check/source/safed/check/config.d` | `safe-d.json`. |
-| `check/source/safed/check/scaffold.d` + `templates/` | `init`. Templates are compiled in (`stringImportPaths`). |
-| `check/source/safed/check/version_.d` | Stamped by `scripts/prepare-release.sh`. Don't hand-edit. |
-| `.github/workflows/safe-d.yml` | Reusable workflow that other repos call at `@vX`. |
+| `source/safer/` | Library: the safe replacements the rules point to. |
+| `source/safer/{io,concurrency,json}.d` | The io modules: the only place `@trusted` is expected. |
+| `check/source/safer/check/lexer.d` | Strips comments and literals and keeps string-mixin text. Rules match code, never raw lines. |
+| `check/source/safer/check/rules.d` | SD001–SD024 and `projectRules` (P000). |
+| `check/source/safer/check/rules_test.d` | One test per rule: a hit and a near miss. |
+| `check/source/safer/check/config.d` | `safer-d.json`. |
+| `check/source/safer/check/scaffold.d` + `templates/` | `init`. Templates are compiled in (`stringImportPaths`). |
+| `check/source/safer/check/version_.d` | Stamped by `scripts/prepare-release.sh`. Don't hand-edit. |
+| `.github/workflows/safer-d.yml` | Reusable workflow that other repos call at `@vX`. |
 | `scripts/e2e.sh` | `init`, then build, test and a planted violation. |
 
 ## Rules for changing rules
 
 - Never reuse or renumber an SD ID.
 - A new rule ships as `warn` (in `Config.severity` defaults), becomes an
-  error one minor later, and gets a `SAFE-D.md` section and a test in
+  error one minor later, and gets a `SAFER-D.md` section and a test in
   `rules_test.d` with a near miss.
 - Before changing a rule, run it against nano-coder-d, d8ctl and the D SDK
-  (copy `source/` + `dub.json` to `/tmp`, add a `safe-d.json`) and report the
+  (copy `source/` + `dub.json` to `/tmp`, add a `safer-d.json`) and report the
   count changes in the PR.
 
 ## Strictness

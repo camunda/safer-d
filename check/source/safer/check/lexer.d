@@ -8,7 +8,7 @@
 /// Token strings (`q{...}`) stay code, since their contents are D tokens.
 /// That is enough for the rules: a `@trusted` in a comment or a `catch` in
 /// a string can no longer match.
-module safed.check.lexer;
+module safer.check.lexer;
 
 @safe:
 

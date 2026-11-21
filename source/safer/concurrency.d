@@ -1,10 +1,10 @@
 /// Threads that can only share what their types say they share (the
 /// "E profile"): `spawn` takes a context-free function and sendable
 /// arguments, threads talk through `Chan`s or `Locked`/`Shared` state, and
-/// `Isolated` moves a uniquely owned value across. safe-d-check bans raw
+/// `Isolated` moves a uniquely owned value across. safer-d-check bans raw
 /// threads, `std.concurrency`, `__gshared` and unions outside the io modules
 /// (SD007, SD008) and caps `assumeIsolated` (SD009).
-module safed.concurrency;
+module safer.concurrency;
 
 @safe:
 
@@ -117,7 +117,7 @@ struct Shared(T)
 // The "E profile": threads start only through `spawn`, which takes a plain
 // `function` (no hidden closure context) and arguments that are sendable,
 // and threads talk through `Channel`s of sendable values or `Locked` state.
-// safe-d-check bans `new Thread` outside the io modules (SD007), so data
+// safer-d-check bans `new Thread` outside the io modules (SD007), so data
 // shared between threads is visible in the types.
 
 /// Whether a value of type `T` may be handed to another thread: it holds no
@@ -135,7 +135,7 @@ struct Isolated(T)
     @disable this(this);
 
     /// Claim that nothing else refers to `value` (e.g. it was just built).
-    /// The compiler can't check this; safe-d-check counts every call
+    /// The compiler can't check this; safer-d-check counts every call
     /// against the `isolation` budget (SD009), so each claim gets reviewed.
     static Isolated assumeIsolated(T value)
     {

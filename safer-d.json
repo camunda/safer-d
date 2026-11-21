@@ -1,10 +1,10 @@
 {
   "sources": ["source", "check/source"],
-  "ioModules": ["source/safed/io.d", "source/safed/concurrency.d", "source/safed/json.d"],
-  "nullAudit": { "module": "source/safed/null_audit_test.d", "skip": ["check/source"] },
+  "ioModules": ["source/safer/io.d", "source/safer/concurrency.d", "source/safer/json.d"],
+  "nullAudit": { "module": "source/safer/null_audit_test.d", "skip": ["check/source"] },
   "allow": {
-    "SD010": ["source/safed/arith.d"],
-    "SD015": ["source/safed/option.d"]
+    "SD010": ["source/safer/arith.d"],
+    "SD015": ["source/safer/option.d"]
   },
   "requireHook": false,
   "budgets": {

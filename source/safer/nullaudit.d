@@ -7,22 +7,22 @@
 ///
 /// - `NotNull!C`: always there (construction halts on null);
 /// - `Option!C`: may be absent, and using it forces the absent case;
-/// - `@nullable("why") C`: a reviewed exception, counted by safe-d-check (SD019).
+/// - `@nullable("why") C`: a reviewed exception, counted by safer-d-check (SD019).
 ///
 /// The compiler resolves the types, so `auto`, aliases and types from other
 /// modules are all seen. It can't see inside function bodies: locals,
-/// parameters and `is null` tests there are left to safe-d-check (SD015).
+/// parameters and `is null` tests there are left to safer-d-check (SD015).
 /// Arrays and associative arrays of classes are not checked.
 ///
 /// A project runs it from one test module that imports every module and
-/// calls `auditModules` (safe-d-check's SD018 checks that the list is
+/// calls `auditModules` (safer-d-check's SD018 checks that the list is
 /// complete). `dub test` leaves the main module out, so `app.d` audits
 /// itself with a `static assert` on `bareRefs!(app)`.
-module safed.nullaudit;
+module safer.nullaudit;
 @safe:
 
 import std.traits : Unqual, isSomeFunction;
-import safed.option : nullable;
+import safer.option : nullable;
 
 /// Is `T` (ignoring const/immutable/shared) a class or interface reference?
 enum isBareRef(T) = is(Unqual!T == class) || is(Unqual!T == interface);

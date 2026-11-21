@@ -6,5 +6,5 @@ on:
   pull_request:
 
 jobs:
-  safe-d:
-    uses: camunda/safe-d/.github/workflows/safe-d.yml@v{{major}}
+  safer-d:
+    uses: camunda/safer-d/.github/workflows/safer-d.yml@v{{major}}

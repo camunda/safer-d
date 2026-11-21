@@ -1,14 +1,14 @@
-# Reusable Safe D gate. In a project:
+# Reusable Safer D gate. In a project:
 #
 #   jobs:
-#     safe-d:
-#       uses: camunda/safe-d/.github/workflows/safe-d.yml@v1
+#     safer-d:
+#       uses: camunda/safer-d/.github/workflows/safer-d.yml@v2
 #
-# It runs `dub test` (whose preBuildCommands run safe-d-check), then the
+# It runs `dub test` (whose preBuildCommands run safer-d-check), then the
 # checker again with GitHub annotations, then D-Scanner. The checker is the
-# safe-d version the project depends on (dub.selections.json), never a
+# safer-d version the project depends on (dub.selections.json), never a
 # floating one, so CI and local builds agree.
-name: Safe D
+name: Safer D
 
 on:
   workflow_call:
@@ -56,26 +56,26 @@ jobs:
       - run: dub test
 
   check:
-    name: safe-d-check
+    name: safer-d-check
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
       - uses: dlang-community/setup-dlang@v2
         with:
           compiler: ${{ inputs.ldc }}
-      - name: Find the safe-d this project depends on
-        id: safed
+      - name: Find the safer-d this project depends on
+        id: safer
         run: |
           set -euo pipefail
           dub upgrade --missing-only -q
-          dir="$(dub describe --data-list --data=import-paths | grep '/safe-d/source/$' | sed 's|/source/$||' | head -1)"
+          dir="$(dub describe --data-list --data=import-paths | grep '/safer-d/source/$' | sed 's|/source/$||' | head -1)"
           if [ -z "$dir" ]; then
-            echo "::error::safe-d is not a dependency of this project (dub.json dependencies)"
+            echo "::error::safer-d is not a dependency of this project (dub.json dependencies)"
             exit 1
           fi
           echo "dir=$dir" >> "$GITHUB_OUTPUT"
-      - name: safe-d-check (annotations)
-        run: dub run -q --root "${{ steps.safed.outputs.dir }}" :check -- --root . --format github
+      - name: safer-d-check (annotations)
+        run: dub run -q --root "${{ steps.safer.outputs.dir }}" :check -- --root . --format github
       - name: D-Scanner
         if: inputs.dscanner
         run: dub run -q dscanner@0.16.0-beta.5 -- --styleCheck --config dscanner.ini ${{ inputs.dscanner-paths }}

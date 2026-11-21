@@ -1,7 +1,7 @@
 /// The tool's version, stamped by scripts/prepare-release.sh at release.
-module safed.check.version_;
+module safer.check.version_;
 
 @safe:
 
-/// SemVer of this safe-d release.
+/// SemVer of this safer-d release.
 enum toolVersion = "1.3.0";
