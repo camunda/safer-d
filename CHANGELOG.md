@@ -1,3 +1,10 @@
+# [1.2.0](https://github.com/camunda/safe-d/compare/v1.1.0...v1.2.0) (2026-11-21)
+
+
+### Features
+
+* **check:** SD022 caps class-typed locals that start or become null ([#4](https://github.com/camunda/safe-d/issues/4)) ([486de84](https://github.com/camunda/safe-d/commit/486de840a56b613afc5b5fe44af6f5dafce24cd6)), closes [safe-d#3](https://github.com/safe-d/issues/3)
+
 # [1.1.0](https://github.com/camunda/safe-d/compare/v1.0.1...v1.1.0) (2026-11-21)
 
 
