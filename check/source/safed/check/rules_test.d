@@ -5,7 +5,8 @@ module safed.check.rules_test;
 
 @safe:
 
-import safed.check.config : Config, parseConfig;
+import safed.check.config : Config, Severity, parseConfig;
+import std.algorithm : canFind;
 import safed.check.rules;
 
 private Result check(string cfgJson, string[2][] files, string[string] dub = null)
@@ -318,4 +319,94 @@ unittest // SD022
     assert(countOf(t, "SD022") == 0);
     auto allowed = check(`{"allow":{"SD022":["a.d"]}}`, [["a.d", ok ~ "class C {}\nvoid f() { C c; }\n"]]);
     assert(countOf(allowed, "SD022") == 0);
+}
+
+unittest // SD015: a template argument isn't the declared type (`NotNull!C x;` is not a `C`)
+{
+    auto r = check([["a.d", ok
+        ~ "class C {}\n"
+        ~ "unittest { static assert(!__traits(compiles, { NotNull!C x; })); }\n"
+        ~ "struct O(T) { this(T x) { if (x is null) assert(0); } }\n"]]);   // near miss
+    assert(countOf(r, "SD015") == 0);
+    auto hit = check([["a.d", ok ~ "class C {}\nvoid f(C x) { if (x is null) {} }\n"]]);
+    assert(countOf(hit, "SD015") == 1);
+}
+
+unittest // SD023: pure-core modules throw only privately, and the throws are counted
+{
+    auto r = check([
+        ["p.d", "module p;\n@safe:\npure:\n"
+            ~ "class ParseError : Exception { this() { super(\"\"); } }\n"     // 4: public
+            ~ "private class Unwind : Exception { this() { super(\"\"); } }\n"
+            ~ "void f() { throw new Unwind(); }\n"                            // counted
+            ~ "// throw in a comment\n"],
+        ["q.d", "module q;\n@safe:\nclass E : Exception { this() { super(\"\"); } }\n"   // near miss: not pure-core
+            ~ "void g() pure { throw new E(); }\n"]]);
+    assert(ids(r, "SD023") == ["SD023@4"]);
+    assert(countOf(r, "SD023") == 1);
+    // Ships as a warning.
+    assert(parseConfig(`{}`).severity("SD023") == Severity.warn);
+}
+
+unittest // SD024: module-level `version (unittest)` imports
+{
+    auto r = check([["a.d", ok
+        ~ "version (unittest) import std.stdio;\n"                 // 2
+        ~ "version (unittest)\n{\n    import std.file;\n"         // 5
+        ~ "    void helper() { import std.path; }\n}\n"            // near miss: inside a function
+        ~ "unittest { import std.conv; }\n"                        // near miss
+        ~ "version (unittest) { static import std.array; }\n"]]);  // 9
+    assert(ids(r, "SD024") == ["SD024@2", "SD024@5", "SD024@9"]);
+    auto t = check([["t.d", "module t;\n@safe:\nversion (unittest):\nimport std.stdio;\n"
+        ~ "version (unittest) import std.file;\n"]]);
+    assert(ids(t, "SD024") == []);
+}
+
+unittest // project rules: ban, with except/only/testFiles, allow and rules
+{
+    enum rule = `{"id":"P001","kind":"ban","pattern":"\\bsetlocale\\b","message":"keep the C locale"`;
+    string[2][] files = [
+        ["src/a.d", ok ~ "void f() { setlocale(0, null); }\n// setlocale\nauto s = \"setlocale\";\n"],
+        ["src/c.d", ok ~ "void g() { setlocale(0, null); }\n"],
+        ["src/a_test.d", ok ~ "unittest { setlocale(0, null); }\n"],
+        ["lib/b.d", ok ~ "void h() { setlocale(0, null); }\n"]];
+    assert(ids(check(`{"projectRules":[` ~ rule ~ `}]}`, files), "P001") == ["P001@2", "P001@2", "P001@2"]);
+    auto r = check(`{"projectRules":[` ~ rule ~ `,"except":["src/c.d"],"only":["src"],"testFiles":true}]}`, files);
+    string[] where;
+    foreach (f; r.findings) if (f.rule == "P001") where ~= f.file;
+    assert(where == ["src/a.d", "src/a_test.d"]);
+    auto allowed = check(`{"allow":{"P001":["src"]},"projectRules":[` ~ rule ~ `}]}`, files);
+    assert(ids(allowed, "P001") == ["P001@2"]);
+    auto off = check(`{"rules":{"P001":"off"},"projectRules":[` ~ rule ~ `}]}`, files);
+    assert(ids(off, "P001") == []);
+}
+
+unittest // project rules: budget and floor count matches
+{
+    auto r = check(`{"projectRules":[
+        {"id":"P001","kind":"budget","pattern":"\\bsleep\\b","budget":"sleep","message":"sleeps"},
+        {"id":"P002","kind":"floor","pattern":"\\bpure\\b(?!:)","floor":5,"message":"pure attributes"}]}`, [
+        ["a.d", ok ~ "pure:\nint f() pure { sleep(); sleep(); return 0; }\nint g() pure;\n// pure sleep\n"],
+        ["a_test.d", ok ~ "int h() pure { sleep(); return 0; }\n"]]);
+    assert(countOf(r, "P001") == 2);
+    foreach (c; r.counts) if (c.rule == "P001") assert(c.budget == "sleep");
+    assert(r.floors.length == 1 && r.floors[0].count == 2 && r.floors[0].floor == 5);
+}
+
+unittest // project rules: listed (and exact)
+{
+    enum cfg = `{"projectRules":[{"id":"P001","kind":"listed","select":"^pure:","listIn":"src/pc_test.d",
+        "except":["src/audit.d"],"exact":true,"message":"list pure-core modules"}]}`;
+    auto r = check(cfg, [
+        ["src/a.d", "module app.a;\n@safe:\npure:\n"],
+        ["src/b.d", "module app.b;\n@safe:\npure:\n"],                    // not listed
+        ["src/audit.d", "module app.audit;\n@safe:\npure:\n"],            // excepted
+        ["src/c.d", "module app.c;\n@safe:\nint f() pure;\n"],            // not pure-core
+        ["src/pc_test.d", "module app.pc_test;\n@safe:\nimport app.audit : x;\nstatic import app.a;\n"
+            ~ "static import app.c;\n// static import app.b;\n"]]);
+    assert(ids(r, "P001") == ["P001@1", "P001@5"]);
+    assert(r.findings[0].message.canFind("app.b") && r.findings[1].message.canFind("app.c"));
+    auto missing = check(`{"projectRules":[{"id":"P001","kind":"listed","select":"x","listIn":"nope.d","message":"m"}]}`,
+        [["a.d", ok]]);
+    assert(ids(missing, "P001") == ["P001@1"]);
 }

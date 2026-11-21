@@ -23,7 +23,7 @@ Regex!char re(string pattern)()
 }
 import std.algorithm : canFind, endsWith, startsWith;
 import std.string : strip, stripRight;
-import safed.check.config : Config, Severity;
+import safed.check.config : Config, Kind, ProjectRule, Severity;
 import safed.check.lexer : Line, lex, isBlank;
 
 /// A rule, for `--rules` and the docs.
@@ -59,6 +59,8 @@ static immutable Rule[] allRules = [
     Rule("SD020", "cast", "`cast(` outside the io modules is capped"),
     Rule("SD021", null, "dub.json keeps the Safe D compiler settings"),
     Rule("SD022", "null-local", "class-typed locals that start or become null are capped; initialise them, or use safed.option.Option"),
+    Rule("SD023", "pure-throw", "pure-core modules (`pure:`) return errors as values: `throw`s are capped and exception classes are private"),
+    Rule("SD024", null, "no module-level `version (unittest)` imports outside test-only modules"),
 ];
 
 /// The rule with `id`.
@@ -106,11 +108,23 @@ struct Count
     string[] where;
 }
 
+/// A `floor` project rule's result: the count may only go up.
+struct Floor
+{
+    string rule;
+    string what;
+    long count;
+    long floor;
+    /// "file(line)" for each counted occurrence.
+    string[] where;
+}
+
 /// Everything a run found.
 struct Result
 {
     Finding[] findings;
     Count[] counts;
+    Floor[] floors;
 }
 
 /// Run every rule that is not `off` over `files` (and the dub.json texts,
@@ -145,6 +159,10 @@ Result runRules(const ref Config cfg, const Source[] files, const string[string]
         (f) => !cfg.isTest(f.path) && !cfg.isIo(f.path), (code) => countMatches(code, re!`(^|[^\w])cast\s*\(`), true);
     if (on("SD021")) sd021(cfg, dubJsons, r);
     sd022(cfg, files, r);
+    sd023(cfg, files, r);
+    if (on("SD024")) sd024(cfg, files, r);
+    foreach (ref p; cfg.projectRules)
+        if (on(p.id)) projectRule(cfg, p, files, r);
     return r;
 }
 
@@ -486,7 +504,7 @@ private void sd015(const ref Config cfg, const Source[] files, ref Result r)
 
     bool[string] local;     // file ~ "\0" ~ name
     bool[string] member;
-    auto typed = re!`[^\w.]([A-Z]\w*)\)?[ \t]+([a-z_]\w*)[ \t]*[;=,)]`;
+    auto typed = re!`[^\w.!]([A-Z]\w*)\)?[ \t]+([a-z_]\w*)[ \t]*[;=,)]`;
     foreach (ref f; files)
         foreach (ref l; f.lines)
             foreach (m; matchAll(" " ~ l.code, typed))
@@ -822,4 +840,189 @@ private void sd022(const ref Config cfg, const Source[] files, ref Result r)
         }
     }
     r.counts ~= c;
+}
+
+// ---- SD023: pure-core errors are values ---------------------------------------
+
+/// Whether `f` is a pure-core module: a line that is just `pure:`.
+bool isPureCore(const ref Source f)
+{
+    foreach (ref l; f.lines)
+        if (matchFirst(l.code, re!`^pure:\s*$`)) return true;
+    return false;
+}
+
+/// SD023: in a pure-core module a failure is a `Result` (safed.result), not
+/// an exception. What may throw is a parser unwinding to its own entry
+/// point, which turns it into the error value, so its exception class is
+/// private and the `throw`s are counted against `pure-throw`.
+private void sd023(const ref Config cfg, const Source[] files, ref Result r)
+{
+    if (cfg.severity("SD023") == Severity.off) return;
+    Count c = Count("SD023", "pure-throw", "`throw`s in pure-core modules (return a Result instead)");
+    auto throws = re!`(^|[^\w])throw\b`;
+    auto exClass = re!`^\s*((public|package|protected|final|abstract|static)\s+)*class\s+\w+\s*:\s*\w*(Exception|Error)\b`;
+    foreach (ref f; files)
+    {
+        if (cfg.isTest(f.path) || cfg.allowed("SD023", f.path) || !isPureCore(f)) continue;
+        foreach (ref l; f.lines)
+        {
+            if (matchFirst(l.code, throws))
+            {
+                c.count++;
+                c.where ~= at(f.path, l.number);
+            }
+            if (matchFirst(l.code, exClass))
+                r.findings ~= Finding("SD023", f.path, l.number,
+                    "an exception class in a pure-core module must be private; return a Result (safed.result) instead of throwing");
+        }
+    }
+    r.counts ~= c;
+}
+
+// ---- SD024: test-only imports stay in the tests ---------------------------------
+
+/// SD024: a module-level `version (unittest)` import is in scope for the
+/// whole module, but only in the test build, so code that uses it by
+/// mistake passes `dub test` and breaks the release build. Modules that are
+/// test-only from the top (`version (unittest):`) are exempt.
+private void sd024(const ref Config cfg, const Source[] files, ref Result r)
+{
+    auto ver = re!`^\s*version\s*\(\s*unittest\s*\)\s*`;
+    auto imp = re!`^\s*((private|public|package|static)\s+)*import\s`;
+    foreach (ref f; files)
+    {
+        if (cfg.allowed("SD024", f.path)) continue;
+        bool testOnly;
+        foreach (ref l; f.lines)
+            if (matchFirst(l.code, re!`^\s*version\s*\(\s*unittest\s*\)\s*:`)) { testOnly = true; break; }
+        if (testOnly) continue;
+        long depth;
+        bool pending;       // `version (unittest)` at module level, `{` to come
+        long block = -1;    // depth of the open module-level `version (unittest) {`
+        void report(size_t line)
+        {
+            r.findings ~= Finding("SD024", f.path, line,
+                "a module-level `version (unittest)` import leaks into non-test code in the test build only; "
+                ~ "import inside the unittest block or test helper instead");
+        }
+        foreach (ref l; f.lines)
+        {
+            string code = l.code;
+            if (depth == 0 && !pending)
+                if (auto m = matchFirst(code, ver))
+                {
+                    code = m.post;
+                    if (matchFirst(code, imp)) { report(l.number); continue; }
+                    pending = true;
+                }
+            if (pending && code.strip.length)
+            {
+                if (code.strip.startsWith("{"))
+                {
+                    depth++;
+                    block = depth;
+                    code = code.strip[1 .. $];
+                }
+                pending = false;
+            }
+            if (block >= 0 && depth == block && matchFirst(code, imp)) report(l.number);
+            foreach (ch; code)
+            {
+                if (ch == '{') depth++;
+                else if (ch == '}')
+                {
+                    if (depth == block) block = -1;
+                    depth--;
+                }
+            }
+        }
+    }
+}
+
+// ---- Project rules (`projectRules` in safe-d.json) ---------------------------
+
+private void projectRule(const ref Config cfg, const ref ProjectRule p, const Source[] files, ref Result r)
+{
+    import std.regex : regex;
+    bool reads(const ref Source f) { return p.covers(f.path, cfg.isTest(f.path)) && !cfg.allowed(p.id, f.path); }
+    final switch (p.kind)
+    {
+        case Kind.ban:
+        case Kind.budget:
+        case Kind.floor:
+            auto pat = regex(p.pattern);
+            long count;
+            string[] where;
+            foreach (ref f; files)
+            {
+                if (!reads(f)) continue;
+                foreach (ref l; f.lines)
+                {
+                    immutable n = countMatches(l.code, pat);
+                    if (!n) continue;
+                    if (p.kind == Kind.ban) r.findings ~= Finding(p.id, f.path, l.number, p.message);
+                    count += n;
+                    where ~= at(f.path, l.number);
+                }
+            }
+            if (p.kind == Kind.budget) r.counts ~= Count(p.id, p.budget, p.message, count, where);
+            if (p.kind == Kind.floor) r.floors ~= Floor(p.id, p.message, count, p.floor, where);
+            break;
+        case Kind.listed:
+            listed(cfg, p, files, r);
+            break;
+    }
+}
+
+/// `listed`: every module with a line matching `select` is imported by
+/// `listIn` (SD018's mechanism); with `exact`, every `static import` there
+/// names such a module.
+private void listed(const ref Config cfg, const ref ProjectRule p, const Source[] files, ref Result r)
+{
+    import std.regex : regex;
+    const(Source)* list;
+    foreach (ref f; files)
+        if (f.path == p.listIn) list = &f;
+    if (list is null)
+    {
+        r.findings ~= Finding(p.id, p.listIn, 1, "the `listIn` module named in safe-d.json doesn't exist");
+        return;
+    }
+    bool[string] imported, staticImports;
+    size_t[string] importLine;
+    auto imp = re!`^\s*(static\s+)?import\s+([\w.]+)\s*[;:,]`;
+    foreach (ref l; list.lines)
+        if (auto m = matchFirst(l.code, imp))
+        {
+            imported[m[2]] = true;
+            if (m[1].length) { staticImports[m[2]] = true; importLine[m[2]] = l.number; }
+        }
+    auto sel = regex(p.select);
+    auto mod = re!`^\s*module\s+([\w.]+)\s*;`;
+    bool[string] selected;
+    foreach (ref f; files)
+    {
+        if (!p.covers(f.path, cfg.isTest(f.path)) || cfg.allowed(p.id, f.path)) continue;
+        string name;
+        bool hit;
+        foreach (ref l; f.lines)
+        {
+            if (!name.length) if (auto m = matchFirst(l.code, mod)) name = m[1];
+            if (matchFirst(l.code, sel)) hit = true;
+        }
+        if (!hit || !name.length) continue;
+        selected[name] = true;
+        if (name !in imported)
+            r.findings ~= Finding(p.id, p.listIn, 1, p.message ~ ": add `static import " ~ name ~ ";`");
+    }
+    if (p.exact)
+    {
+        import std.algorithm : sort;
+        import std.array : array;
+        foreach (name; staticImports.keys.array.sort)
+            if (name !in selected)
+                r.findings ~= Finding(p.id, p.listIn, importLine[name],
+                    p.message ~ ": `" ~ name ~ "` is listed but doesn't match `select`");
+    }
 }

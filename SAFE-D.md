@@ -127,6 +127,8 @@ rules and the library that answers them.
 | SD020 | budget `cast` | `cast(` outside the io modules. |
 | SD021 | ban | `dub.json` keeps the compiler settings above. |
 | SD022 | budget `null-local` | Class-typed locals that start or become null. |
+| SD023 | budget `pure-throw` | `throw`s in pure-core modules; their exception classes are private. |
+| SD024 | ban | No module-level `version (unittest)` imports outside test-only modules. |
 
 ### SD001–SD003: `@safe` everywhere
 
@@ -252,6 +254,26 @@ reference that has been checked.
   (`new C`, or a known class-typed local or parameter). Test files and
   `unittest` blocks don't count.
 
+### SD023: pure-core errors are values
+
+A pure-core module is one with a `pure:` label: every free function in it
+depends only on its arguments. In such a module a failure is a value, a
+`Result` from `safed.result`, so the signature says what can go wrong. The
+one throw that stays is a parser unwinding to its own entry point, which
+catches it and returns the error result. Its exception class is `private`,
+so the exception can't escape the module, and SD023 counts the `throw`s
+against the `pure-throw` budget. A public exception class in a pure-core
+module is an error.
+
+### SD024: test-only imports stay in the tests
+
+A module-level `version (unittest) import x;` (or an import directly inside a
+module-level `version (unittest) { ... }` block) is in scope for the whole
+module, but only in the test build. Non-test code that uses it by mistake
+passes `dub test` and breaks the release build. Put the import in the
+`unittest` block or the test helper that uses it. A module that is test-only
+from the top (`version (unittest):`) is exempt.
+
 ### SD020: casts
 
 `cast(` is D's `as any`: it overrides the type system, and in `@safe` code
@@ -273,7 +295,10 @@ exempted with `allow`.
   "rules": { "SD020": "warn" },
   "budgets": { "trusted-io": 12, "catch": 3 },
   "dubFiles": ["dub.json"],
-  "requireHook": true
+  "requireHook": true,
+  "projectRules": [
+    { "id": "P001", "kind": "ban", "pattern": "\\bsetlocale\\b", "message": "keep the C locale" }
+  ]
 }
 ```
 
@@ -286,12 +311,54 @@ exempted with `allow`.
 | `subtractionScope` | Files where SD011 counts raw subtractions. |
 | `nullAudit` | The module that runs `auditModules`; `skip` lists modules it can't import. Omit to turn SD018 off. |
 | `allow` | Rule ID to paths where that rule doesn't apply. |
-| `rules` | Rule ID to `off` or `warn` (default: error). |
+| `rules` | Rule ID to `off` or `warn` (default: error; a new rule defaults to warn for one minor release). |
 | `budgets` | Budget name to the most allowed. Missing means 0. |
 | `dubFiles` | `dub.json` files SD021 checks. |
 | `requireHook` | Whether SD021 requires the build hook (off only for safe-d itself). |
+| `projectRules` | The project's own checks (below). |
 
 Unknown keys are an error, so a typo can't switch a rule off.
+
+### Project rules
+
+Some checks matter to one project only: "only `clock.d` reads the clock",
+"every pure-core module is listed in the purity audit". `projectRules` lets
+a project declare them in `safe-d.json` instead of a side script.
+
+```json
+"projectRules": [
+  { "id": "P001", "kind": "ban", "pattern": "\\bClock\\.curr(Std)?Time\\b|\\bThread\\.sleep\\b",
+    "except": ["source/app/clock.d"], "message": "read the clock and sleep through app.clock so tests can fake time" },
+  { "id": "P002", "kind": "budget", "pattern": "\\bgetenv\\b", "budget": "getenv", "message": "`getenv` calls" },
+  { "id": "P003", "kind": "floor", "pattern": "\\bpure\\b(?!:)", "floor": 1213, "message": "`pure` attributes" },
+  { "id": "P004", "kind": "listed", "select": "^pure:\\s*$", "listIn": "source/app/pure_core_test.d",
+    "exact": true, "message": "every pure-core module is listed in pure_core_test.d" }
+]
+```
+
+| Kind | Meaning |
+| --- | --- |
+| `ban` | Each match of `pattern` is a finding. |
+| `budget` | Matches are counted against `budgets[budget]`. `--ratchet` lowers it. |
+| `floor` | Matches are counted and may only go up: below `floor` is an error, and `--ratchet` raises it. |
+| `listed` | Every module with a line matching `select` is `import`ed or `static import`ed by `listIn` (SD018's mechanism, generalised). With `exact`, every `static import` in `listIn` must name such a module too. |
+
+- Patterns are `std.regex` and match each line's code: comments are removed
+  and string contents emptied, as for the SD rules. Each match counts, so a
+  line with two hits counts two.
+- Every kind takes `except` and `only` (path lists) and `testFiles` (whether
+  test files count; default `false`).
+- IDs are `P` and three digits, so they can't clash with an SD ID. `allow` and
+  `rules` take them like SD IDs.
+- `adopt` doesn't write project rules, but it sets `budget` and `floor`
+  rules to today's counts.
+- Unknown kinds or keys, keys of another kind, bad regexes and duplicate IDs
+  are errors.
+
+A project rule is for a local convention: a module that owns the clock, a
+call the project bans for its own reasons. When the reason is about D itself
+(memory safety, absence, error handling) and would hold in any Safe D
+project, propose it here as an SD rule instead, as SD023 and SD024 were.
 
 ## Adopting
 
