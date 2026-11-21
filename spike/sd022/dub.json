@@ -1,0 +1,33 @@
+{
+ "name": "sdspike",
+ "targetType": "executable",
+ "sourcePaths": [
+  "source",
+  "dmdpkg/compiler/src/dmd"
+ ],
+ "importPaths": [
+  "source",
+  "dmdpkg/compiler/src"
+ ],
+ "stringImportPaths": [
+  "dmdpkg/compiler/src/dmd/res",
+  "dmdpkg/generated/dub"
+ ],
+ "excludedSourceFiles": [
+  "dmdpkg/compiler/src/dmd/backend/*",
+  "dmdpkg/compiler/src/dmd/lib/*",
+  "dmdpkg/compiler/src/dmd/irgen/*",
+  "dmdpkg/compiler/src/dmd/glue/*",
+  "dmdpkg/compiler/src/dmd/dmsc.d",
+  "dmdpkg/compiler/src/dmd/eh.d",
+  "dmdpkg/compiler/src/dmd/main.d"
+ ],
+ "versions": [
+  "NoBackend",
+  "GC",
+  "NoMain",
+  "MARS",
+  "CallbackAPI",
+  "DMDLIB"
+ ]
+}
