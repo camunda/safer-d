@@ -1,5 +1,5 @@
 {
-  "name": "safe-d",
+  "name": "safer-d",
   "description": "Safe D: the shared safety rules, checker and @safe building blocks for Camunda's D projects",
   "license": "Apache-2.0",
   "authors": [
@@ -51,7 +51,7 @@
         "check/source"
       ],
       "dependencies": {
-        "safe-d": "*"
+        "safer-d": "*"
       },
       "toolchainRequirements": {
         "dmd": "no",
